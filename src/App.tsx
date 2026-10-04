@@ -138,6 +138,7 @@ export function App() {
   const handleConfirmReset = () => {
     setMasterState(initialTumpukan);
     saveStoredMasterState(initialTumpukan);
+    pushServerState(initialTumpukan);
     setIsResetModalOpen(false);
     showToast('info', 'Data Direset', 'Tumpukan master dikembalikan ke data awal.');
   };

@@ -325,7 +325,7 @@ export function searchPhysicalLocation(query: string, masterState: MasterState):
   return results.sort((a, b) => b.sim - a.sim);
 }
 
-const STORAGE_KEY = 'ORGANIZER_FISIK_MASTER_STATE_V2';
+const STORAGE_KEY = 'ORGANIZER_FISIK_MASTER_STATE_V3';
 
 export function loadStoredMasterState(defaultState: MasterState): MasterState {
   try {
