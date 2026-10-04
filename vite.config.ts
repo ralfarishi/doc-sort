@@ -33,16 +33,25 @@ function localSyncPlugin(): Plugin {
             body += chunk
           })
           req.on('end', () => {
+            res.setHeader('Content-Type', 'application/json')
             try {
               const parsed = JSON.parse(body)
+              if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
+                res.statusCode = 400
+                res.end(JSON.stringify({ error: 'Payload tidak valid' }))
+                return
+              }
               fs.writeFileSync(masterFilePath, JSON.stringify(parsed, null, 2), 'utf-8')
-              res.setHeader('Content-Type', 'application/json')
               res.end(JSON.stringify({ success: true }))
-            } catch (e) {
+            } catch {
               res.statusCode = 500
               res.end(JSON.stringify({ error: 'Failed saving master state' }))
             }
           })
+        } else {
+          res.statusCode = 405
+          res.setHeader('Allow', 'GET, POST')
+          res.end(JSON.stringify({ error: 'Method Not Allowed' }))
         }
       })
     },

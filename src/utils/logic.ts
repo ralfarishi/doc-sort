@@ -334,11 +334,8 @@ export function loadStoredMasterState(defaultState: MasterState): MasterState {
       saveStoredMasterState(defaultState);
       return defaultState;
     }
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object') {
-      return parsed;
-    }
-    return defaultState;
+    const parsed: unknown = JSON.parse(raw);
+    return isMasterState(parsed) ? parsed : defaultState;
   } catch (err) {
     console.error('Failed to load state from localStorage', err);
     return defaultState;
@@ -364,56 +361,29 @@ export function exportStateToJson(state: MasterState): void {
   downloadAnchor.remove();
 }
 
-export function generateSyncCode(state: MasterState): string {
-  try {
-    const jsonStr = JSON.stringify(state);
-    return btoa(encodeURIComponent(jsonStr));
-  } catch (err) {
-    return JSON.stringify(state, null, 2);
-  }
+/** Runtime check that an unknown value is a well-formed MasterState (surveyor -> MasterItem[]). */
+export function isMasterState(value: unknown): value is MasterState {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  return Object.values(value as Record<string, unknown>).every(
+    (pile) =>
+      Array.isArray(pile) &&
+      pile.every((it) => it && typeof it === 'object' && typeof (it as MasterItem).debitur === 'string')
+  );
 }
 
-export function parseSyncCode(input: string): MasterState | null {
-  const trimmed = input.trim();
-  if (!trimmed) return null;
-
-  // Try raw JSON first
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as MasterState;
-    }
-  } catch {
-    // Not raw JSON, try Base64
-  }
-
-  // Try Base64
-  try {
-    const decodedStr = decodeURIComponent(atob(trimmed));
-    const parsed = JSON.parse(decodedStr);
-    if (parsed && typeof parsed === 'object') {
-      return parsed as MasterState;
-    }
-  } catch {
-    // Failed decoding
-  }
-
-  return null;
-}
-
+/**
+ * Returns the server state, or `null` when the server is unreachable, unconfigured
+ * or responds with a malformed payload. An empty `{}` means "reachable but empty".
+ */
 export async function fetchServerState(): Promise<MasterState | null> {
   try {
-    const res = await fetch('/api/state');
-    if (res.ok) {
-      const data = await res.json();
-      if (data && typeof data === 'object') {
-        return data as MasterState;
-      }
-    }
+    const res = await fetch('/api/state', { cache: 'no-store' });
+    if (!res.ok) return null;
+    const data: unknown = await res.json();
+    return isMasterState(data) ? data : null;
   } catch {
-    // Server endpoint not reachable (e.g. running statically)
+    return null;
   }
-  return null;
 }
 
 export async function pushServerState(state: MasterState): Promise<boolean> {

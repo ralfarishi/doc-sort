@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import {
   Tray,
   CheckCircle,
@@ -12,7 +12,7 @@ import {
   Check,
   Funnel,
 } from '@phosphor-icons/react';
-import type { ExcelRecord, FolderRecord, MasterState, InsertionStep, MatchResult, MatchCandidate } from '../types';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, InsertionStep, MatchResult, MatchCandidate } from '../types';
 import { matchQuery, simulateHandInsertion, getCleanInvestigatorName } from '../utils/logic';
 import { ConfirmModal } from './ConfirmModal';
 
@@ -20,10 +20,13 @@ interface InsertWizardViewProps {
   masterState: MasterState;
   excelList: ExcelRecord[];
   folderList: FolderRecord[];
+  /** Active ordner. Owned by the parent so the Navbar and the wizard can never disagree. */
   activeSurveyor: string;
   surveyorsList: string[];
-  onSelectSurveyor?: (surveyor: string) => void;
-  onSaveNewMaster: (surveyor: string, newPile: any[], steps: InsertionStep[]) => void;
+  /** Names to pre-fill the textarea with (e.g. from the Status "missing documents" list). */
+  prefillNames?: string[];
+  onSelectSurveyor: (surveyor: string) => void;
+  onSaveNewMaster: (surveyor: string, newPile: MasterItem[], steps: InsertionStep[]) => void;
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
 }
 
@@ -31,16 +34,16 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
   masterState,
   excelList,
   folderList,
-  activeSurveyor,
+  activeSurveyor: selectedSurveyor,
   surveyorsList,
+  prefillNames = [],
   onSelectSurveyor,
   onSaveNewMaster,
   onShowToast,
 }) => {
   const [stage, setStage] = useState<'input' | 'review' | 'stepper'>('input');
   const [mode, setMode] = useState<'sisip' | 'baru'>('sisip');
-  const [selectedSurveyor, setSelectedSurveyor] = useState(activeSurveyor);
-  const [rawInputText, setRawInputText] = useState('');
+  const [rawInputText, setRawInputText] = useState(() => prefillNames.join('\n'));
 
   // Processing state
   const [verifiedResults, setVerifiedResults] = useState<MatchResult[]>([]);
@@ -50,23 +53,16 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
   const [showFullTable, setShowFullTable] = useState(false);
   const [isProblemConfirmModalOpen, setIsProblemConfirmModalOpen] = useState(false);
 
-  // Sync selectedSurveyor when parent activeSurveyor prop changes
-  useEffect(() => {
-    setSelectedSurveyor(activeSurveyor);
-  }, [activeSurveyor]);
-
   const handleSurveyorChange = (newSurv: string) => {
-    setSelectedSurveyor(newSurv);
-    if (onSelectSurveyor) {
-      onSelectSurveyor(newSurv);
-    }
-    // If results already exist, re-evaluate them immediately with the newly selected surveyor
+    onSelectSurveyor(newSurv);
+    // Re-evaluate any existing results against the newly selected ordner.
     if (verifiedResults.length > 0) {
-      const updated = verifiedResults.map((r) => {
-        const re = matchQuery(r.query, excelList, folderList, newSurv);
-        return re && re.found_excel ? re : r;
-      });
-      setVerifiedResults(updated);
+      setVerifiedResults(
+        verifiedResults.map((r) => {
+          const re = matchQuery(r.query, excelList, folderList, newSurv);
+          return re && re.found_excel ? re : r;
+        })
+      );
     }
   };
 

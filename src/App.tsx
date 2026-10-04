@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Navbar, type ActiveTab } from './components/Navbar';
 import { SearchView } from './components/SearchView';
 import { InsertWizardView } from './components/InsertWizardView';
@@ -29,27 +29,47 @@ export function App() {
   const [masterState, setMasterState] = useState<MasterState>(() =>
     loadStoredMasterState(initialTumpukan)
   );
+  // True once the initial server fetch has settled; pushes are blocked until then.
+  const [isHydrated, setIsHydrated] = useState(false);
+  // Last serialized state known to be in sync with the server (prevents echo pushes).
+  const lastSyncedRef = useRef('');
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
   const [activeSurveyor, setActiveSurveyor] = useState<string>('CANDRA MAULANA');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
-  // Check and fetch latest state from server on mount (for cross-device LAN sync)
+  // Hydrate: the cloud database is the source of truth across devices.
+  //  - server has data  -> adopt it (and don't echo it back)
+  //  - server is empty  -> keep local/seed state; it is pushed by the effect below
+  //  - server unreachable/unconfigured -> stay local-only
   useEffect(() => {
+    let cancelled = false;
     fetchServerState().then((serverState) => {
-      if (serverState && Object.keys(serverState).length > 0) {
+      if (cancelled) return;
+      if (serverState === null) {
+        lastSyncedRef.current = JSON.stringify(masterState);
+      } else if (Object.keys(serverState).length > 0) {
+        lastSyncedRef.current = JSON.stringify(serverState);
         setMasterState(serverState);
-        saveStoredMasterState(serverState);
       }
+      setIsHydrated(true);
     });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Sync to localStorage and server on update
+  // Persist locally and push to the server only when the state really changed.
   useEffect(() => {
+    if (!isHydrated) return;
     saveStoredMasterState(masterState);
+    const serialized = JSON.stringify(masterState);
+    if (serialized === lastSyncedRef.current) return;
+    lastSyncedRef.current = serialized;
     pushServerState(masterState);
-  }, [masterState]);
+  }, [masterState, isHydrated]);
 
   // Toast Helper
   const showToast = useCallback(
@@ -137,20 +157,21 @@ export function App() {
   // Reset to initial JSON data
   const handleConfirmReset = () => {
     setMasterState(initialTumpukan);
-    saveStoredMasterState(initialTumpukan);
-    pushServerState(initialTumpukan);
     setIsResetModalOpen(false);
     showToast('info', 'Data Direset', 'Tumpukan master dikembalikan ke data awal.');
   };
 
-  // Navigate to insert wizard with prefilled names (from Status view missing list)
-  const [wizardPrefill, setWizardPrefill] = useState<{ surveyor: string; names: string[] } | null>(
-    null
-  );
+  // Names handed to the insert wizard from the Status "missing documents" list.
+  const [prefillNames, setPrefillNames] = useState<string[]>([]);
+
+  const handleTabChange = (tab: ActiveTab) => {
+    setPrefillNames([]);
+    setActiveTab(tab);
+  };
 
   const handleNavigateToInsertWithDebtors = (surveyor: string, names: string[]) => {
     setActiveSurveyor(surveyor);
-    setWizardPrefill({ surveyor, names });
+    setPrefillNames(names);
     setActiveTab('insert');
   };
 
@@ -159,7 +180,7 @@ export function App() {
       {/* Navigation Header & Mobile Bottom Bar */}
       <Navbar
         activeTab={activeTab}
-        setActiveTab={setActiveTab}
+        setActiveTab={handleTabChange}
         activeSurveyor={activeSurveyor}
         surveyorsList={surveyorsList}
         onSelectSurveyor={setActiveSurveyor}
@@ -183,8 +204,9 @@ export function App() {
             masterState={masterState}
             excelList={excelRecords}
             folderList={folderRecords}
-            activeSurveyor={wizardPrefill?.surveyor || activeSurveyor}
+            activeSurveyor={activeSurveyor}
             surveyorsList={surveyorsList}
+            prefillNames={prefillNames}
             onSelectSurveyor={setActiveSurveyor}
             onSaveNewMaster={handleSaveNewMaster}
             onShowToast={showToast}

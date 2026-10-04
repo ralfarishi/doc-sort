@@ -9,7 +9,7 @@ import {
   XCircle,
 } from '@phosphor-icons/react';
 import type { MasterState } from '../types';
-import { exportStateToJson, generateSyncCode, parseSyncCode } from '../utils/logic';
+import { exportStateToJson, isMasterState } from '../utils/logic';
 import { BottomSheet } from './BottomSheet';
 
 interface CatalogViewProps {
@@ -32,7 +32,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   const [wilayahFilter, setWilayahFilter] = useState('ALL');
   const [isActionSheetOpen, setIsActionSheetOpen] = useState(false);
 
-  const currentItems = masterState[activeSurveyor] || [];
+  const currentItems = useMemo(
+    () => masterState[activeSurveyor] ?? [],
+    [masterState, activeSurveyor]
+  );
 
   // Available filters
   const availableCases = useMemo(() => {
@@ -76,15 +79,15 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(event.target?.result as string);
-        if (typeof parsed === 'object' && parsed !== null) {
+        const parsed: unknown = JSON.parse(event.target?.result as string);
+        if (isMasterState(parsed) && Object.keys(parsed).length > 0) {
           onImportState(parsed);
           setIsActionSheetOpen(false);
           onShowToast('success', 'Impor Berhasil', 'Data tumpukan master diperbarui dari file JSON.');
         } else {
-          onShowToast('error', 'Format Tidak Sesuai', 'File JSON tidak valid.');
+          onShowToast('error', 'Format Tidak Sesuai', 'File JSON bukan data tumpukan yang valid.');
         }
-      } catch (err) {
+      } catch {
         onShowToast('error', 'Gagal Membaca File', 'Terjadi kesalahan saat parsing JSON.');
       }
     };
@@ -112,27 +115,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     navigator.clipboard.writeText(md);
     setIsActionSheetOpen(false);
     onShowToast('success', 'Markdown Disalin!', 'Katalog markdown telah disalin ke clipboard.');
-  };
-
-  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
-  const [syncInputText, setSyncInputText] = useState('');
-
-  const handleCopySyncCode = () => {
-    const code = generateSyncCode(masterState);
-    navigator.clipboard.writeText(code);
-    onShowToast('success', 'Kode Sinkronisasi Disalin!', 'Kirim/tempel kode ini di PC atau HP untuk memindahkan data.');
-  };
-
-  const handleApplySyncCode = () => {
-    const parsed = parseSyncCode(syncInputText);
-    if (!parsed) {
-      onShowToast('error', 'Kode Tidak Valid', 'Pastikan kode sinkronisasi atau JSON yang ditempel lengkap.');
-      return;
-    }
-    onImportState(parsed);
-    setIsSyncModalOpen(false);
-    setSyncInputText('');
-    onShowToast('success', 'Sinkronisasi Berhasil!', 'Data tumpukan master diperbarui dari perangkat lain.');
   };
 
   return (
@@ -302,27 +284,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         subtitle={`Manajemen data tumpukan fisik untuk ORDNER ${activeSurveyor}`}
       >
         <div className="space-y-2">
-          {/* Quick Sync HP <-> PC */}
-          <button
-            onClick={() => {
-              setIsActionSheetOpen(false);
-              setIsSyncModalOpen(true);
-            }}
-            className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#FDF1ED] hover:bg-[#FBE2DA] border border-[#F7D0C4] flex items-center gap-3 text-left transition-colors"
-          >
-            <div className="w-8 h-8 rounded-xl bg-[#D97757] text-white flex items-center justify-center shrink-0">
-              <ArrowsClockwise size={18} weight="bold" />
-            </div>
-            <div>
-              <span className="font-bold text-sm text-[#D97757] block leading-tight">
-                Sinkronisasi HP ⇄ PC (Salin/Tempel Kode)
-              </span>
-              <span className="text-xs text-[#79716B]">
-                Pindahkan data tumpukan antar perangkat tanpa ribet
-              </span>
-            </div>
-          </button>
-
           {/* Export JSON */}
           <button
             onClick={() => {
@@ -398,58 +359,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </span>
             </div>
           </button>
-        </div>
-      </BottomSheet>
-
-      {/* SYNC MODAL (COPY & PASTE SYNC TEXT) */}
-      <BottomSheet
-        isOpen={isSyncModalOpen}
-        onClose={() => setIsSyncModalOpen(false)}
-        title="Sinkronisasi HP ⇄ PC"
-        subtitle="Pindahkan seluruh bundle tumpukan master antar perangkat dengan instan"
-      >
-        <div className="space-y-4">
-          {/* Section 1: Export / Copy from this device */}
-          <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-2xl p-4 space-y-2">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#D97757] block">
-              1. Dari Perangkat Ini (Pengirim)
-            </span>
-            <p className="text-xs text-[#79716B]">
-              Klik tombol di bawah untuk menyalin seluruh data tumpukan saat ini, lalu kirimkan lewat WhatsApp / Catatan ke perangkat lain.
-            </p>
-            <button
-              onClick={handleCopySyncCode}
-              className="w-full py-2.5 rounded-xl bg-[#D97757] hover:bg-[#C86243] text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-colors shadow-xs"
-            >
-              <Copy size={16} weight="bold" />
-              Salin Kode Sinkronisasi Data
-            </button>
-          </div>
-
-          {/* Section 2: Paste / Import to this device */}
-          <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-2xl p-4 space-y-2.5">
-            <span className="text-xs font-bold uppercase tracking-wider text-[#548A70] block">
-              2. Ke Perangkat Ini (Penerima)
-            </span>
-            <p className="text-xs text-[#79716B]">
-              Tempel kode sinkronisasi atau teks JSON yang Anda salin dari perangkat lain di bawah ini:
-            </p>
-            <textarea
-              value={syncInputText}
-              onChange={(e) => setSyncInputText(e.target.value)}
-              placeholder="Tempel kode sinkronisasi di sini..."
-              rows={3}
-              className="w-full p-2.5 text-xs bg-white border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] font-mono focus:outline-none focus:border-[#548A70]"
-            />
-            <button
-              onClick={handleApplySyncCode}
-              disabled={!syncInputText.trim()}
-              className="w-full py-2.5 rounded-xl bg-[#548A70] hover:bg-[#43725b] text-white font-bold text-xs flex items-center justify-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-xs"
-            >
-              <ArrowsClockwise size={16} weight="bold" />
-              Terapkan & Sinkronkan Data
-            </button>
-          </div>
         </div>
       </BottomSheet>
     </div>
