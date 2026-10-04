@@ -1,4 +1,4 @@
-import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, InsertionStep, MasterState, SearchPhysicalResult } from '../types';
+import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult } from '../types';
 
 export function normalize(text: string | number | null | undefined): string {
   if (text === null || text === undefined) return '';
@@ -66,12 +66,19 @@ export function stringSimilarity(s1: string, s2: string): number {
   return (longerLength - costs[shorter.length]) / longerLength;
 }
 
-export function matchQuery(query: string, excelList: ExcelRecord[], folderList: FolderRecord[]): MatchResult | null {
+export function matchQuery(
+  query: string,
+  excelList: ExcelRecord[],
+  folderList: FolderRecord[],
+  targetSurveyor?: string
+): MatchResult | null {
   const qNorm = normalize(query);
   if (!qNorm) return null;
 
-  let bestMatch: ExcelRecord | null = null;
-  let bestScore = 0.0;
+  const cleanTarget = targetSurveyor ? getCleanInvestigatorName(targetSurveyor) : '';
+
+  // 1. Collect all candidates
+  const candidates: MatchCandidate[] = [];
 
   for (const ex of excelList) {
     const exNorm = normalize(ex.debitur);
@@ -95,55 +102,83 @@ export function matchQuery(query: string, excelList: ExcelRecord[], folderList: 
       score = 1.0;
     }
 
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = ex;
+    if (score >= 0.55) {
+      const candSurveyor = getCleanInvestigatorName(ex.surveyor);
+      const isUnassigned =
+        !ex.surveyor ||
+        candSurveyor.includes('BELUM DITUGASKAN') ||
+        candSurveyor.includes('TIDAK TERIDENTIFIKASI');
+      const isExactSurveyor = Boolean(cleanTarget && !isUnassigned && candSurveyor === cleanTarget);
+
+      // Find folders for this candidate
+      const candFolders: FolderRecord[] = [];
+      const exNameNorm = normalize(ex.debitur);
+      for (const fo of folderList) {
+        const foNorm = normalize(fo.clean_name);
+        if (exNameNorm === foNorm || qNorm === foNorm) {
+          candFolders.push(fo);
+        }
+      }
+
+      candidates.push({
+        excel: ex,
+        score,
+        isExactSurveyor,
+        isUnassigned,
+        folders: candFolders,
+      });
     }
   }
 
-  if (!bestMatch || bestScore < 0.55) {
+  if (candidates.length === 0) {
     return {
       query,
       found_excel: false,
       score: 0,
       excel: null,
       folders: [],
+      candidates: [],
+      hasAmbiguity: false,
+      surveyorMismatch: false,
+      isUnassigned: false,
     };
   }
 
-  const exNameNorm = normalize(bestMatch.debitur);
-  const surveyorExcel = bestMatch.surveyor ? bestMatch.surveyor.trim() : '';
-
-  let matchedFolders: FolderRecord[] = [];
-  for (const fo of folderList) {
-    const foNorm = normalize(fo.clean_name);
-    if (exNameNorm === foNorm || qNorm === foNorm) {
-      matchedFolders.push(fo);
+  // 2. Sort candidates:
+  // - If targetSurveyor is given, prioritize candidate matching targetSurveyor!
+  // - High score next
+  // - Non-unassigned over unassigned
+  candidates.sort((a, b) => {
+    if (cleanTarget) {
+      if (a.isExactSurveyor && !b.isExactSurveyor) return -1;
+      if (!a.isExactSurveyor && b.isExactSurveyor) return 1;
     }
-  }
-
-  if (matchedFolders.length === 0) {
-    const exTokens = new Set(bestMatch.debitur.toUpperCase().match(/\w+/g) || []);
-    for (const fo of folderList) {
-      const foTokens = new Set((fo.clean_name || '').toUpperCase().match(/\w+/g) || []);
-      if (exTokens.size > 0 && foTokens.size > 0) {
-        const intersection = new Set([...exTokens].filter(x => foTokens.has(x)));
-        if (intersection.size === exTokens.size && intersection.size === foTokens.size) {
-          matchedFolders.push(fo);
-        } else if (intersection.size >= 2) {
-          matchedFolders.push(fo);
-        }
-      }
+    if (a.isUnassigned !== b.isUnassigned) {
+      return a.isUnassigned ? 1 : -1;
     }
-  }
+    return b.score - a.score;
+  });
 
-  if (matchedFolders.length > 1 && surveyorExcel) {
-    const survMatch = matchedFolders.filter(f =>
-      f.surveyor && normalize(surveyorExcel).includes(normalize(f.surveyor))
-    );
-    if (survMatch.length > 0) {
-      matchedFolders = survMatch;
-    }
+  const bestCandidate = candidates[0];
+  const bestMatch = bestCandidate.excel;
+  const bestScore = bestCandidate.score;
+
+  // Check ambiguity: are there multiple candidates with high score?
+  const highScorers = candidates.filter((c) => c.score >= 0.75 || normalize(c.excel.debitur) === qNorm);
+  const hasAmbiguity = highScorers.length > 1;
+
+  // Check surveyor mismatch
+  const candSurveyorClean = getCleanInvestigatorName(bestMatch.surveyor);
+  const isUnassigned = bestCandidate.isUnassigned;
+  const surveyorMismatch = Boolean(cleanTarget && !isUnassigned && candSurveyorClean !== cleanTarget);
+
+  let warningMessage: string | undefined = undefined;
+  if (isUnassigned) {
+    warningMessage = 'Nasabah ini tercatat "Belum Ditugaskan" di Master Excel.';
+  } else if (surveyorMismatch) {
+    warningMessage = `Tercatat untuk surveyor ${bestMatch.surveyor}, bukan ${targetSurveyor}.`;
+  } else if (hasAmbiguity) {
+    warningMessage = `Ditemukan ${highScorers.length} nasabah dengan nama identik/serupa.`;
   }
 
   return {
@@ -151,7 +186,12 @@ export function matchQuery(query: string, excelList: ExcelRecord[], folderList: 
     found_excel: true,
     score: bestScore,
     excel: bestMatch,
-    folders: matchedFolders,
+    folders: bestCandidate.folders,
+    candidates,
+    hasAmbiguity,
+    surveyorMismatch,
+    isUnassigned,
+    warningMessage,
   };
 }
 
@@ -166,7 +206,8 @@ export function determineWilayah(kota: string): string {
 
 export function simulateHandInsertion(
   currentMasterItems: MasterItem[],
-  newBatchResults: MatchResult[]
+  newBatchResults: MatchResult[],
+  targetSurveyor?: string
 ): { deskPile: MasterItem[]; steps: InsertionStep[] } {
   const deskPile: MasterItem[] = [...currentMasterItems];
   const steps: InsertionStep[] = [];
@@ -206,14 +247,19 @@ export function simulateHandInsertion(
       stepType = 'middle';
     }
 
+    const finalSurveyor =
+      targetSurveyor && (!ex.surveyor || getCleanInvestigatorName(ex.surveyor).includes('BELUM DITUGASKAN'))
+        ? targetSurveyor
+        : ex.surveyor || targetSurveyor || 'TIDAK TERIDENTIFIKASI';
+
     const newItem: MasterItem = {
       debitur: ex.debitur,
       no: ex.no,
       id_klaim: ex.id_klaim,
       kota: ex.kota,
-      wilayah: determineWilayah(ex.kota),
+      wilayah: ex.wilayah || determineWilayah(ex.kota),
       jenis_case: ex.jenis_case,
-      surveyor: ex.surveyor,
+      surveyor: finalSurveyor,
       visit: ex.visit,
       status_laporan: ex.status_laporan,
       hasil_visit: ex.hasil_visit,
@@ -317,3 +363,69 @@ export function exportStateToJson(state: MasterState): void {
   downloadAnchor.click();
   downloadAnchor.remove();
 }
+
+export function generateSyncCode(state: MasterState): string {
+  try {
+    const jsonStr = JSON.stringify(state);
+    return btoa(encodeURIComponent(jsonStr));
+  } catch (err) {
+    return JSON.stringify(state, null, 2);
+  }
+}
+
+export function parseSyncCode(input: string): MasterState | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+
+  // Try raw JSON first
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as MasterState;
+    }
+  } catch {
+    // Not raw JSON, try Base64
+  }
+
+  // Try Base64
+  try {
+    const decodedStr = decodeURIComponent(atob(trimmed));
+    const parsed = JSON.parse(decodedStr);
+    if (parsed && typeof parsed === 'object') {
+      return parsed as MasterState;
+    }
+  } catch {
+    // Failed decoding
+  }
+
+  return null;
+}
+
+export async function fetchServerState(): Promise<MasterState | null> {
+  try {
+    const res = await fetch('/api/state');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        return data as MasterState;
+      }
+    }
+  } catch {
+    // Server endpoint not reachable (e.g. running statically)
+  }
+  return null;
+}
+
+export async function pushServerState(state: MasterState): Promise<boolean> {
+  try {
+    const res = await fetch('/api/state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+

@@ -7,12 +7,14 @@ import { CatalogView } from './components/CatalogView';
 import { Toast, type ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem } from './types';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult } from './types';
 import {
   loadStoredMasterState,
   saveStoredMasterState,
   simulateHandInsertion,
   getCleanInvestigatorName,
+  fetchServerState,
+  pushServerState,
 } from './utils/logic';
 
 // Import raw JSON data
@@ -33,9 +35,20 @@ export function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
 
-  // Sync to localStorage on update
+  // Check and fetch latest state from server on mount (for cross-device LAN sync)
+  useEffect(() => {
+    fetchServerState().then((serverState) => {
+      if (serverState && Object.keys(serverState).length > 0) {
+        setMasterState(serverState);
+        saveStoredMasterState(serverState);
+      }
+    });
+  }, []);
+
+  // Sync to localStorage and server on update
   useEffect(() => {
     saveStoredMasterState(masterState);
+    pushServerState(masterState);
   }, [masterState]);
 
   // Toast Helper
@@ -82,15 +95,19 @@ export function App() {
     const cleanSurv = getCleanInvestigatorName(surveyor);
     const currentPile = masterState[cleanSurv] || [];
 
-    const pseudoResult = {
+    const pseudoResult: MatchResult = {
       query: excelItem.debitur,
       found_excel: true,
       score: 1.0,
       excel: excelItem,
       folders: folderItem ? [folderItem] : [],
+      candidates: [],
+      hasAmbiguity: false,
+      surveyorMismatch: false,
+      isUnassigned: false,
     };
 
-    const { deskPile } = simulateHandInsertion(currentPile, [pseudoResult]);
+    const { deskPile } = simulateHandInsertion(currentPile, [pseudoResult], cleanSurv);
 
     setMasterState((prev) => ({
       ...prev,
@@ -167,6 +184,7 @@ export function App() {
             folderList={folderRecords}
             activeSurveyor={wizardPrefill?.surveyor || activeSurveyor}
             surveyorsList={surveyorsList}
+            onSelectSurveyor={setActiveSurveyor}
             onSaveNewMaster={handleSaveNewMaster}
             onShowToast={showToast}
           />

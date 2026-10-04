@@ -48,12 +48,25 @@ export interface InsertionStep {
   type: 'first' | 'top' | 'bottom' | 'middle';
 }
 
+export interface MatchCandidate {
+  excel: ExcelRecord;
+  score: number;
+  isExactSurveyor: boolean;
+  isUnassigned: boolean;
+  folders: FolderRecord[];
+}
+
 export interface MatchResult {
   query: string;
   found_excel: boolean;
   score: number;
   excel: ExcelRecord | null;
   folders: FolderRecord[];
+  candidates: MatchCandidate[];
+  hasAmbiguity: boolean;
+  surveyorMismatch: boolean;
+  isUnassigned: boolean;
+  warningMessage?: string;
 }
 
 export interface SearchPhysicalResult {
