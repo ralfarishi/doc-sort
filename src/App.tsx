@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Navbar, type ActiveTab } from './components/Navbar';
 import { SearchView } from './components/SearchView';
 import { InsertWizardView } from './components/InsertWizardView';
@@ -7,15 +7,21 @@ import { CatalogView } from './components/CatalogView';
 import { Toast, type ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult } from './types';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem } from './types';
 import {
-  loadStoredMasterState,
-  saveStoredMasterState,
+  loadStored,
+  saveStored,
+  fetchServerSnapshot,
+  pushServerSnapshot,
+  isMasterState,
+  isTransitState,
+  backfillFolderInfo,
+  addToTransit,
+  removeFiledFromTransit,
   simulateHandInsertion,
   getCleanInvestigatorName,
-  fetchServerState,
-  pushServerState,
 } from './utils/logic';
+import { useCloudSyncedState } from './hooks/useCloudSyncedState';
 
 // Import raw JSON data
 import rawData from './data/indexed_visit_data.json';
@@ -26,50 +32,29 @@ const excelRecords = (rawData as any).excel as ExcelRecord[];
 const folderRecords = (rawData as any).folders as FolderRecord[];
 
 export function App() {
-  const [masterState, setMasterState] = useState<MasterState>(() =>
-    loadStoredMasterState(initialTumpukan)
-  );
-  // True once the initial server fetch has settled; pushes are blocked until then.
-  const [isHydrated, setIsHydrated] = useState(false);
-  // Last serialized state known to be in sync with the server (prevents echo pushes).
-  const lastSyncedRef = useRef('');
+  // Master Desk Piles (persisted locally & synced to Turso; automatically backfills missing photo info on load)
+  const [masterState, setMasterState] = useCloudSyncedState<MasterState>({
+    load: () => loadStored('master', isMasterState, initialTumpukan),
+    save: (state) => saveStored('master', state),
+    fetchRemote: () => fetchServerSnapshot('master', isMasterState),
+    pushRemote: (state) => pushServerSnapshot('master', state),
+    adoptEmptyRemote: false, // first-run seeds the cloud from initialTumpukan
+    normalize: (state) => backfillFolderInfo(state, folderRecords),
+  });
+
+  // Transit Trays per Surveyor (persisted locally & synced to Turso; empty remote is authoritative)
+  const [transitState, setTransitState] = useCloudSyncedState<TransitState>({
+    load: () => loadStored('transit', isTransitState, {}),
+    save: (state) => saveStored('transit', state),
+    fetchRemote: () => fetchServerSnapshot('transit', isTransitState),
+    pushRemote: (state) => pushServerSnapshot('transit', state),
+    adoptEmptyRemote: true,
+  });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
   const [activeSurveyor, setActiveSurveyor] = useState<string>('CANDRA MAULANA');
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
   const [isResetModalOpen, setIsResetModalOpen] = useState(false);
-
-  // Hydrate: the cloud database is the source of truth across devices.
-  //  - server has data  -> adopt it (and don't echo it back)
-  //  - server is empty  -> keep local/seed state; it is pushed by the effect below
-  //  - server unreachable/unconfigured -> stay local-only
-  useEffect(() => {
-    let cancelled = false;
-    fetchServerState().then((serverState) => {
-      if (cancelled) return;
-      if (serverState === null) {
-        lastSyncedRef.current = JSON.stringify(masterState);
-      } else if (Object.keys(serverState).length > 0) {
-        lastSyncedRef.current = JSON.stringify(serverState);
-        setMasterState(serverState);
-      }
-      setIsHydrated(true);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Persist locally and push to the server only when the state really changed.
-  useEffect(() => {
-    if (!isHydrated) return;
-    saveStoredMasterState(masterState);
-    const serialized = JSON.stringify(masterState);
-    if (serialized === lastSyncedRef.current) return;
-    lastSyncedRef.current = serialized;
-    pushServerState(masterState);
-  }, [masterState, isHydrated]);
 
   // Toast Helper
   const showToast = useCallback(
@@ -141,13 +126,38 @@ export function App() {
     );
   };
 
-  // Save new master state from Wizard
+  // Save new master state from Wizard (also automatically removes any filed items from Transit Tray)
   const handleSaveNewMaster = (surveyor: string, newPile: MasterItem[]) => {
     setMasterState((prev) => ({
       ...prev,
       [surveyor]: newPile,
     }));
+    setTransitState((prev) => removeFiledFromTransit(prev, surveyor, newPile));
   };
+
+  // Add an item to Transit Tray (pure state update without in-updater side-effects)
+  const handleAddToTransit = useCallback((item: TransitItem) => {
+    setTransitState((prev) => addToTransit(prev, [item]));
+  }, [setTransitState]);
+
+  // Claim/pull all items from Transit Tray for a surveyor into active wizard
+  const handleClaimTransit = useCallback((surveyor: string) => {
+    setTransitState((prev) => {
+      const next = { ...prev };
+      delete next[surveyor];
+      return next;
+    });
+    showToast(
+      'success',
+      'Berkas Transit Digabungkan',
+      `Semua berkas dari stopmap transit ${surveyor} telah dimasukkan ke antrean.`
+    );
+  }, [setTransitState, showToast]);
+
+  // Total transit documents across all trays
+  const totalTransitDocs = useMemo(() => {
+    return Object.values(transitState).reduce((acc, tray) => acc + tray.length, 0);
+  }, [transitState]);
 
   // Import JSON state
   const handleImportState = (newState: MasterState) => {
@@ -157,6 +167,7 @@ export function App() {
   // Reset to initial JSON data
   const handleConfirmReset = () => {
     setMasterState(initialTumpukan);
+    setTransitState({});
     setIsResetModalOpen(false);
     showToast('info', 'Data Direset', 'Tumpukan master dikembalikan ke data awal.');
   };
@@ -185,6 +196,7 @@ export function App() {
         surveyorsList={surveyorsList}
         onSelectSurveyor={setActiveSurveyor}
         totalPhysicalDocs={totalPhysicalDocs}
+        totalTransitDocs={totalTransitDocs}
       />
 
       {/* Main Content Area */}
@@ -202,6 +214,7 @@ export function App() {
         {activeTab === 'insert' && (
           <InsertWizardView
             masterState={masterState}
+            transitState={transitState}
             excelList={excelRecords}
             folderList={folderRecords}
             activeSurveyor={activeSurveyor}
@@ -209,6 +222,8 @@ export function App() {
             prefillNames={prefillNames}
             onSelectSurveyor={setActiveSurveyor}
             onSaveNewMaster={handleSaveNewMaster}
+            onAddToTransit={handleAddToTransit}
+            onClaimTransit={handleClaimTransit}
             onShowToast={showToast}
           />
         )}
@@ -216,6 +231,7 @@ export function App() {
         {activeTab === 'status' && (
           <StatusView
             masterState={masterState}
+            transitState={transitState}
             excelList={excelRecords}
             onSelectSurveyor={setActiveSurveyor}
             onNavigateToInsert={handleNavigateToInsertWithDebtors}

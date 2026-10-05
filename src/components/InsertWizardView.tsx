@@ -12,12 +12,13 @@ import {
   Check,
   Funnel,
 } from '@phosphor-icons/react';
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem, InsertionStep, MatchResult, MatchCandidate } from '../types';
-import { matchQuery, simulateHandInsertion, getCleanInvestigatorName } from '../utils/logic';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, InsertionStep, MatchResult, MatchCandidate, TransitState, TransitItem } from '../types';
+import { matchQuery, simulateHandInsertion, getCleanInvestigatorName, createId } from '../utils/logic';
 import { ConfirmModal } from './ConfirmModal';
 
 interface InsertWizardViewProps {
   masterState: MasterState;
+  transitState: TransitState;
   excelList: ExcelRecord[];
   folderList: FolderRecord[];
   /** Active ordner. Owned by the parent so the Navbar and the wizard can never disagree. */
@@ -27,11 +28,14 @@ interface InsertWizardViewProps {
   prefillNames?: string[];
   onSelectSurveyor: (surveyor: string) => void;
   onSaveNewMaster: (surveyor: string, newPile: MasterItem[], steps: InsertionStep[]) => void;
+  onAddToTransit: (item: TransitItem) => void;
+  onClaimTransit: (surveyor: string) => void;
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
 }
 
 export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
   masterState,
+  transitState,
   excelList,
   folderList,
   activeSurveyor: selectedSurveyor,
@@ -39,6 +43,8 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
   prefillNames = [],
   onSelectSurveyor,
   onSaveNewMaster,
+  onAddToTransit,
+  onClaimTransit,
   onShowToast,
 }) => {
   const [stage, setStage] = useState<'input' | 'review' | 'stepper'>('input');
@@ -212,6 +218,78 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
     );
   };
 
+  // Send a mismatched item to target surveyor's Transit Tray
+  const handleSendToTransit = (index: number) => {
+    const item = verifiedResults[index];
+    if (!item || !item.excel) return;
+    const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
+    if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') {
+      onShowToast('warning', 'Surveyor Tidak Diketahui', 'Berkas ini belum ditugaskan ke surveyor manapun di database.');
+      return;
+    }
+
+    const transitItem: TransitItem = {
+      id: createId(),
+      debitur: item.excel.debitur,
+      sourceSurveyor: selectedSurveyor,
+      targetSurveyor: targetSurv,
+      timestamp: new Date().toISOString(),
+      excelRecord: item.excel,
+      folderRecord: item.folders.length > 0 ? item.folders[0] : undefined,
+    };
+
+    onAddToTransit(transitItem);
+    setVerifiedResults((prev) => prev.filter((_, idx) => idx !== index));
+    onShowToast(
+      'info',
+      `Disisihkan ke Map Transit ${targetSurv}`,
+      `Kertas fisik "${item.excel.debitur}" silakan masukkan ke stopmap transit ${targetSurv} di meja.`
+    );
+  };
+
+  // Bulk send all surveyor mismatches to their respective Transit Trays
+  const handleSendAllMismatchesToTransit = () => {
+    const mismatches = verifiedResults.filter((m) => m.surveyorMismatch && m.excel);
+    if (mismatches.length === 0) return;
+
+    const successfullyRoutedKeys = new Set<string>();
+
+    mismatches.forEach((item) => {
+      if (!item.excel) return;
+      const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
+      if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') return;
+
+      const transitItem: TransitItem = {
+        id: createId(),
+        debitur: item.excel.debitur,
+        sourceSurveyor: selectedSurveyor,
+        targetSurveyor: targetSurv,
+        timestamp: new Date().toISOString(),
+        excelRecord: item.excel,
+        folderRecord: item.folders.length > 0 ? item.folders[0] : undefined,
+      };
+      onAddToTransit(transitItem);
+      successfullyRoutedKeys.add(`${item.excel.jenis_case}#${item.excel.no}`);
+    });
+
+    if (successfullyRoutedKeys.size > 0) {
+      setVerifiedResults((prev) =>
+        prev.filter((m) => !m.excel || !successfullyRoutedKeys.has(`${m.excel.jenis_case}#${m.excel.no}`))
+      );
+      onShowToast(
+        'info',
+        'Semua Mismatch Disisihkan ke Transit',
+        `${successfullyRoutedKeys.size} berkas telah dialihkan ke map transit surveyor masing-masing.`
+      );
+    } else {
+      onShowToast(
+        'warning',
+        'Tidak Dapat Dialihkan',
+        'Semua berkas yang bermasalah belum memiliki target surveyor yang jelas di Excel.'
+      );
+    }
+  };
+
   // Remove an item from verified list
   const handleRemoveItem = (index: number) => {
     setVerifiedResults((prev) => prev.filter((_, idx) => idx !== index));
@@ -373,6 +451,38 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
           </div>
 
+          {/* BANNER NOTIFIKASI MAP TRANSIT JIKA ADA BERKAS TITIPAN */}
+          {transitState[selectedSurveyor] && transitState[selectedSurveyor].length > 0 && (
+            <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3.5 sm:p-4 shadow-xs flex items-center justify-between gap-3 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-xl bg-[#5D7CB0] text-white flex items-center justify-center font-bold text-sm shrink-0">
+                  <Tray size={18} weight="bold" />
+                </div>
+                <div>
+                  <h3 className="text-xs sm:text-sm font-bold text-[#2D2824]">
+                    Ada {transitState[selectedSurveyor].length} berkas di Map Transit untuk {selectedSurveyor}!
+                  </h3>
+                  <p className="text-[11px] text-[#5D7CB0] mt-0.5">
+                    Ambil berkas fisik dari stopmap transit di meja dan gabungkan sekarang.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const items = transitState[selectedSurveyor];
+                  const names = items.map((x) => x.debitur);
+                  const existing = rawInputText.trim();
+                  setRawInputText(existing ? `${existing}\n${names.join('\n')}` : names.join('\n'));
+                  onClaimTransit(selectedSurveyor);
+                }}
+                className="px-3.5 py-2 rounded-xl bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-xs font-bold shadow-xs transition-colors shrink-0 cursor-pointer"
+              >
+                + Gabungkan {transitState[selectedSurveyor].length} Berkas ke Input
+              </button>
+            </div>
+          )}
+
           {/* Target Ordner Selector */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
             <div>
@@ -500,17 +610,28 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
 
             {/* Quick bulk action if there are warnings */}
             {pendingWarnings.length > 0 && (
-              <div className="bg-[#FCF7ED] border border-[#F3E0BD] rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+              <div className="bg-[#FCF7ED] border border-[#F3E0BD] rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs flex-wrap">
                 <span className="text-[#C48A3F] font-semibold text-[11px]">
-                  Ada {pendingWarnings.length} berkas belum sesuai/ditugaskan di Excel
+                  Ada {pendingWarnings.length} berkas perlu konfirmasi ({verifiedResults.filter((m) => m.surveyorMismatch).length} beda surveyor)
                 </span>
-                <button
-                  type="button"
-                  onClick={handleAssignAllWarnings}
-                  className="px-2.5 py-1 rounded-lg bg-[#C48A3F] hover:bg-[#a6712e] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
-                >
-                  Tetapkan Semua ke Ordner Ini
-                </button>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {verifiedResults.some((m) => m.surveyorMismatch) && (
+                    <button
+                      type="button"
+                      onClick={handleSendAllMismatchesToTransit}
+                      className="px-2.5 py-1 rounded-lg bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
+                    >
+                      📥 Sisihkan Semua ke Transit
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={handleAssignAllWarnings}
+                    className="px-2.5 py-1 rounded-lg bg-[#C48A3F] hover:bg-[#a6712e] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
+                  >
+                    Tetapkan Semua ke Ordner Ini
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -614,17 +735,27 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                   )}
 
                   {res.surveyorMismatch && !res.isUnassigned && (
-                    <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-[#FFFDF7] border border-[#F3E0BD] text-xs">
+                    <div className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-[#FFFDF7] border border-[#F3E0BD] text-xs flex-wrap">
                       <span className="text-[#C48A3F] font-medium text-[11px]">
                         Tercatat untuk: <strong>{ex.surveyor}</strong>
                       </span>
-                      <button
-                        type="button"
-                        onClick={() => handleAssignItemToCurrentOrdner(idx)}
-                        className="px-2.5 py-1 rounded-lg bg-[#C48A3F] hover:bg-[#a6712e] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
-                      >
-                        ✓ Alihkan ke Ordner {selectedSurveyor}
-                      </button>
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => handleSendToTransit(idx)}
+                          className="px-2.5 py-1 rounded-lg bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
+                        >
+                          📥 Sisihkan ke Map Transit {getCleanInvestigatorName(ex.surveyor)}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAssignItemToCurrentOrdner(idx)}
+                          className="px-2.5 py-1 rounded-lg bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#79716B] hover:text-[#2D2824] border border-[#EAE4DC] text-[11px] font-semibold shrink-0 transition-colors cursor-pointer"
+                          title={`Paksa masukkan fisik ke ordner ${selectedSurveyor}`}
+                        >
+                          Alihkan ke Ordner Ini
+                        </button>
+                      </div>
                     </div>
                   )}
 

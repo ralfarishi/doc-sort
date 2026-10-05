@@ -19,6 +19,7 @@ interface NavbarProps {
   surveyorsList: string[];
   onSelectSurveyor: (surveyor: string) => void;
   totalPhysicalDocs: number;
+  totalTransitDocs?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -28,12 +29,13 @@ export const Navbar: React.FC<NavbarProps> = ({
   surveyorsList,
   onSelectSurveyor,
   totalPhysicalDocs,
+  totalTransitDocs = 0,
 }) => {
   const [isOrdnerSheetOpen, setIsOrdnerSheetOpen] = useState(false);
 
   const tabs = [
     { id: 'search' as ActiveTab, label: 'Cari Berkas', icon: MagnifyingGlass },
-    { id: 'insert' as ActiveTab, label: 'Sisip & Susun', icon: Tray },
+    { id: 'insert' as ActiveTab, label: 'Sisip & Susun', icon: Tray, badge: totalTransitDocs },
     { id: 'status' as ActiveTab, label: 'Status Ordner', icon: ChartBar },
     { id: 'catalog' as ActiveTab, label: 'Katalog A-Z', icon: ListDashes },
   ];
@@ -67,14 +69,19 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all relative ${
                     isActive
                       ? 'bg-[#FFFFFF] text-[#D97757] shadow-xs border border-[#EAE4DC]'
                       : 'text-[#79716B] hover:text-[#2D2824]'
                   }`}
                 >
                   <Icon size={16} weight={isActive ? 'bold' : 'regular'} />
-                  {tab.label}
+                  <span>{tab.label}</span>
+                  {Boolean(tab.badge && tab.badge > 0) && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-[#5D7CB0] text-white text-[10px] font-bold leading-none">
+                      {tab.badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -105,13 +112,20 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all ${
+                className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all relative ${
                   isActive
                     ? 'text-[#D97757] bg-[#FDF1ED]'
                     : 'text-[#79716B] hover:text-[#2D2824]'
                 }`}
               >
-                <Icon size={20} weight={isActive ? 'bold' : 'regular'} />
+                <div className="relative">
+                  <Icon size={20} weight={isActive ? 'bold' : 'regular'} />
+                  {Boolean(tab.badge && tab.badge > 0) && (
+                    <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] rounded-full bg-[#5D7CB0] text-white text-[9px] font-bold flex items-center justify-center px-0.5">
+                      {tab.badge}
+                    </span>
+                  )}
+                </div>
                 <span className="text-[10px] font-semibold mt-0.5">{tab.label}</span>
               </button>
             );

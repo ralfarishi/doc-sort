@@ -8,12 +8,13 @@ import {
   PlusCircle,
   CaretRight,
 } from '@phosphor-icons/react';
-import type { ExcelRecord, MasterState } from '../types';
+import type { ExcelRecord, MasterState, TransitState } from '../types';
 import { getCleanInvestigatorName, normalize } from '../utils/logic';
 import { BottomSheet } from './BottomSheet';
 
 interface StatusViewProps {
   masterState: MasterState;
+  transitState: TransitState;
   excelList: ExcelRecord[];
   onSelectSurveyor: (surveyor: string) => void;
   onNavigateToInsert: (surveyor: string, prefillDebtors: string[]) => void;
@@ -22,6 +23,7 @@ interface StatusViewProps {
 
 export const StatusView: React.FC<StatusViewProps> = ({
   masterState,
+  transitState,
   excelList,
   onSelectSurveyor,
   onNavigateToInsert,
@@ -204,6 +206,11 @@ export const StatusView: React.FC<StatusViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
+                    {Boolean(transitState[inv] && transitState[inv].length > 0) && (
+                      <span className="px-2 py-0.5 rounded-lg bg-[#EEF3FA] text-[#5D7CB0] text-[11px] font-bold">
+                        +{transitState[inv].length} di Transit
+                      </span>
+                    )}
                     {statusBadge}
                     <CaretRight size={16} className="text-[#A8A29E]" />
                   </div>
@@ -247,6 +254,26 @@ export const StatusView: React.FC<StatusViewProps> = ({
           }
         >
           <div className="space-y-3">
+            {/* Transit Section if any */}
+            {Boolean(transitState[activeDetailData.inv] && transitState[activeDetailData.inv].length > 0) && (
+              <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#5D7CB0] uppercase tracking-wider">
+                    📥 Di Map Transit Meja ({transitState[activeDetailData.inv].length} berkas)
+                  </span>
+                  <span className="text-[10px] text-[#5D7CB0]">Titipan Penyortiran</span>
+                </div>
+                <div className="divide-y divide-[#E1EAF7] text-xs">
+                  {transitState[activeDetailData.inv].map((t) => (
+                    <div key={t.id} className="py-1.5 flex items-center justify-between gap-2">
+                      <span className="font-bold text-[#2D2824] truncate">{t.debitur}</span>
+                      <span className="text-[10px] text-[#79716B] shrink-0">dari ordner {t.sourceSurveyor}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Search filter inside sheet */}
             {activeDetailData.missingRecords.length > 5 && (
               <div className="relative flex items-center">

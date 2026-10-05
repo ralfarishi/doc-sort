@@ -78,3 +78,15 @@ export interface SearchPhysicalResult {
   prevNeighbor: MasterItem | null;
   nextNeighbor: MasterItem | null;
 }
+
+export interface TransitItem {
+  id: string;
+  debitur: string;
+  sourceSurveyor: string;
+  targetSurveyor: string;
+  timestamp: string;
+  excelRecord: ExcelRecord;
+  folderRecord?: FolderRecord;
+}
+
+export type TransitState = Record<string, TransitItem[]>;

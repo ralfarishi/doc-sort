@@ -7,23 +7,46 @@ import { fileURLToPath } from 'node:url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-function localSyncPlugin(): Plugin {
-  const masterFilePath = path.resolve(__dirname, '../tumpukan_master.json')
+/**
+ * Local mirror of api/state.ts: each scope is persisted to a JSON file next to the project.
+ * `missing` is what GET returns before the file exists (404 = "no server data" for master).
+ */
+const LOCAL_SCOPES = {
+  master: { file: '../tumpukan_master.json', allowEmpty: false, missing: null },
+  transit: { file: '../tumpukan_transit.json', allowEmpty: true, missing: '{}' },
+} as const
 
+type LocalScope = keyof typeof LOCAL_SCOPES
+
+function localSyncPlugin(): Plugin {
   return {
     name: 'local-sync-plugin',
     configureServer(server) {
       server.middlewares.use('/api/state', (req, res) => {
+        res.setHeader('Content-Type', 'application/json')
+        res.setHeader('Cache-Control', 'no-store')
+
+        const scopeParam = new URL(req.url ?? '/', 'http://localhost').searchParams.get('scope') ?? 'master'
+        if (!(scopeParam in LOCAL_SCOPES)) {
+          res.statusCode = 400
+          res.end(JSON.stringify({ error: 'Scope tidak dikenal' }))
+          return
+        }
+        const scope = LOCAL_SCOPES[scopeParam as LocalScope]
+        const filePath = path.resolve(__dirname, scope.file)
+
         if (req.method === 'GET') {
           try {
-            if (fs.existsSync(masterFilePath)) {
-              const data = fs.readFileSync(masterFilePath, 'utf-8')
-              res.setHeader('Content-Type', 'application/json')
-              res.end(data)
+            if (fs.existsSync(filePath)) {
+              res.end(fs.readFileSync(filePath, 'utf-8'))
+              return
+            }
+            if (scope.missing !== null) {
+              res.end(scope.missing)
               return
             }
           } catch (e) {
-            console.error('Failed reading master state', e)
+            console.error(`Failed reading ${scopeParam} state`, e)
           }
           res.statusCode = 404
           res.end(JSON.stringify({ error: 'Not found' }))
@@ -33,19 +56,23 @@ function localSyncPlugin(): Plugin {
             body += chunk
           })
           req.on('end', () => {
-            res.setHeader('Content-Type', 'application/json')
             try {
-              const parsed = JSON.parse(body)
-              if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || Object.keys(parsed).length === 0) {
+              const parsed: unknown = JSON.parse(body)
+              const isObject = !!parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+              const isValid =
+                isObject &&
+                (scope.allowEmpty || Object.keys(parsed).length > 0) &&
+                Object.values(parsed).every(Array.isArray)
+              if (!isValid) {
                 res.statusCode = 400
                 res.end(JSON.stringify({ error: 'Payload tidak valid' }))
                 return
               }
-              fs.writeFileSync(masterFilePath, JSON.stringify(parsed, null, 2), 'utf-8')
+              fs.writeFileSync(filePath, JSON.stringify(parsed, null, 2), 'utf-8')
               res.end(JSON.stringify({ success: true }))
             } catch {
-              res.statusCode = 500
-              res.end(JSON.stringify({ error: 'Failed saving master state' }))
+              res.statusCode = 400
+              res.end(JSON.stringify({ error: 'Payload tidak valid' }))
             }
           })
         } else {

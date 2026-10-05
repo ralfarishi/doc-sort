@@ -1,4 +1,4 @@
-import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult } from '../types';
+import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState } from '../types';
 
 export function normalize(text: string | number | null | undefined): string {
   if (text === null || text === undefined) return '';
@@ -325,31 +325,6 @@ export function searchPhysicalLocation(query: string, masterState: MasterState):
   return results.sort((a, b) => b.sim - a.sim);
 }
 
-const STORAGE_KEY = 'ORGANIZER_FISIK_MASTER_STATE_V3';
-
-export function loadStoredMasterState(defaultState: MasterState): MasterState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      saveStoredMasterState(defaultState);
-      return defaultState;
-    }
-    const parsed: unknown = JSON.parse(raw);
-    return isMasterState(parsed) ? parsed : defaultState;
-  } catch (err) {
-    console.error('Failed to load state from localStorage', err);
-    return defaultState;
-  }
-}
-
-export function saveStoredMasterState(state: MasterState): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch (err) {
-    console.error('Failed to save state to localStorage', err);
-  }
-}
-
 export function exportStateToJson(state: MasterState): void {
   const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(state, null, 2));
   const downloadAnchor = document.createElement('a');
@@ -361,34 +336,87 @@ export function exportStateToJson(state: MasterState): void {
   downloadAnchor.remove();
 }
 
-/** Runtime check that an unknown value is a well-formed MasterState (surveyor -> MasterItem[]). */
-export function isMasterState(value: unknown): value is MasterState {
+// ---------------------------------------------------------------------------
+// Runtime type guards
+// ---------------------------------------------------------------------------
+
+/** `{ [surveyor]: item[] }` where every item satisfies `isItem`. */
+function isSnapshotOf(value: unknown, isItem: (it: Record<string, unknown>) => boolean): boolean {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
-  return Object.values(value as Record<string, unknown>).every(
-    (pile) =>
-      Array.isArray(pile) &&
-      pile.every((it) => it && typeof it === 'object' && typeof (it as MasterItem).debitur === 'string')
+  return Object.values(value).every(
+    (list) =>
+      Array.isArray(list) &&
+      list.every((it) => !!it && typeof it === 'object' && !Array.isArray(it) && isItem(it))
   );
 }
 
+/** Runtime check that an unknown value is a well-formed MasterState (surveyor -> MasterItem[]). */
+export function isMasterState(value: unknown): value is MasterState {
+  return isSnapshotOf(value, (it) => typeof it.debitur === 'string');
+}
+
+/** Runtime check that an unknown value is a well-formed TransitState (surveyor -> TransitItem[]). */
+export function isTransitState(value: unknown): value is TransitState {
+  return isSnapshotOf(
+    value,
+    (it) =>
+      typeof it.id === 'string' &&
+      typeof it.debitur === 'string' &&
+      typeof it.targetSurveyor === 'string'
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Persistence: localStorage + cloud (Turso via /api/state?scope=...)
+// ---------------------------------------------------------------------------
+
+export type SyncScope = 'master' | 'transit';
+
+const STORAGE_KEYS: Record<SyncScope, string> = {
+  master: 'ORGANIZER_FISIK_MASTER_STATE_V3',
+  transit: 'ORGANIZER_FISIK_TRANSIT_STATE_V1',
+};
+
+const apiUrl = (scope: SyncScope) => `/api/state?scope=${scope}`;
+
+export function loadStored<T>(scope: SyncScope, guard: (v: unknown) => v is T, fallback: T): T {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS[scope]);
+    if (!raw) return fallback;
+    const parsed: unknown = JSON.parse(raw);
+    return guard(parsed) ? parsed : fallback;
+  } catch (err) {
+    console.error(`Failed to load ${scope} state from localStorage`, err);
+    return fallback;
+  }
+}
+
+export function saveStored<T>(scope: SyncScope, state: T): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS[scope], JSON.stringify(state));
+  } catch (err) {
+    console.error(`Failed to save ${scope} state to localStorage`, err);
+  }
+}
+
 /**
- * Returns the server state, or `null` when the server is unreachable, unconfigured
+ * Returns the server snapshot, or `null` when the server is unreachable, unconfigured
  * or responds with a malformed payload. An empty `{}` means "reachable but empty".
  */
-export async function fetchServerState(): Promise<MasterState | null> {
+export async function fetchServerSnapshot<T>(scope: SyncScope, guard: (v: unknown) => v is T): Promise<T | null> {
   try {
-    const res = await fetch('/api/state', { cache: 'no-store' });
+    const res = await fetch(apiUrl(scope), { cache: 'no-store' });
     if (!res.ok) return null;
     const data: unknown = await res.json();
-    return isMasterState(data) ? data : null;
+    return guard(data) ? data : null;
   } catch {
     return null;
   }
 }
 
-export async function pushServerState(state: MasterState): Promise<boolean> {
+export async function pushServerSnapshot<T>(scope: SyncScope, state: T): Promise<boolean> {
   try {
-    const res = await fetch('/api/state', {
+    const res = await fetch(apiUrl(scope), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state),
@@ -397,5 +425,96 @@ export async function pushServerState(state: MasterState): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Data healing & transit helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Picks the photo folder for a debtor: prefer the ordner's own surveyor, then the
+ * same case type, then any folder with that name.
+ */
+function pickFolder(candidates: FolderRecord[], ordner: string, jenisCase: string): FolderRecord | undefined {
+  const own = candidates.filter((f) => getCleanInvestigatorName(f.surveyor) === ordner);
+  const pool = own.length > 0 ? own : candidates;
+  return pool.find((f) => String(f.case ?? '') === String(jenisCase)) ?? pool[0];
+}
+
+/**
+ * Fills `files_count` / `folder_path` for items that have no photo info yet, using the
+ * scanned folder index. Returns the SAME reference when nothing changed, so callers can
+ * skip re-renders and redundant cloud pushes.
+ */
+export function backfillFolderInfo(state: MasterState, folders: FolderRecord[]): MasterState {
+  const index = new Map<string, FolderRecord[]>();
+  for (const f of folders) {
+    const key = normalize(f.clean_name);
+    if (!key) continue;
+    const list = index.get(key);
+    if (list) list.push(f);
+    else index.set(key, [f]);
+  }
+
+  let changed = false;
+  const next: MasterState = {};
+  for (const [ordner, pile] of Object.entries(state)) {
+    next[ordner] = pile.map((item) => {
+      if (item.files_count > 0 && item.folder_path) return item;
+      const folder = pickFolder(index.get(normalize(item.debitur)) ?? [], ordner, item.jenis_case);
+      if (!folder || (folder.files_count === item.files_count && folder.path === item.folder_path)) {
+        return item;
+      }
+      changed = true;
+      return { ...item, files_count: folder.files_count, folder_path: folder.path };
+    });
+  }
+  return changed ? next : state;
+}
+
+/** Unique id that also works on plain-HTTP LAN access, where `crypto.randomUUID` is unavailable. */
+export function createId(): string {
+  const c = globalThis.crypto;
+  if (typeof c?.randomUUID === 'function') return c.randomUUID();
+  return Array.from(c.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/** Identity of an Excel row: case type + row number is unique, debtor names are not. */
+const rowKey = (r: { jenis_case: string; no: number | string }) => `${r.jenis_case}#${r.no}`;
+
+export function isInTransit(transit: TransitState, excel: ExcelRecord): boolean {
+  const key = rowKey(excel);
+  return Object.values(transit).some((tray) => tray.some((t) => rowKey(t.excelRecord) === key));
+}
+
+/** Adds items to their target trays, ignoring rows already in any tray (or repeated in the batch). */
+export function addToTransit(transit: TransitState, items: TransitItem[]): TransitState {
+  const seen = new Set(Object.values(transit).flatMap((tray) => tray.map((t) => rowKey(t.excelRecord))));
+  const next = { ...transit };
+  let added = false;
+  for (const it of items) {
+    const key = rowKey(it.excelRecord);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    next[it.targetSurveyor] = [...(next[it.targetSurveyor] ?? []), it];
+    added = true;
+  }
+  return added ? next : transit;
+}
+
+/**
+ * Removes tray items that are now filed in the surveyor's pile. Transit items are only
+ * cleared once they are really saved, so nothing is lost if the wizard is abandoned.
+ */
+export function removeFiledFromTransit(transit: TransitState, surveyor: string, pile: MasterItem[]): TransitState {
+  const tray = transit[surveyor];
+  if (!tray?.length) return transit;
+  const filed = new Set(pile.map(rowKey));
+  const rest = tray.filter((t) => !filed.has(rowKey(t.excelRecord)));
+  if (rest.length === tray.length) return transit;
+  const next = { ...transit };
+  if (rest.length > 0) next[surveyor] = rest;
+  else delete next[surveyor];
+  return next;
 }
 
