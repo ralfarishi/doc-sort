@@ -1,4 +1,8 @@
 import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState } from '../types';
+import { nameSimilarity, normalizeName, stringSimilarity } from './matching';
+
+export { nameSimilarity, normalizeName, stringSimilarity };
+export { jaroSimilarity, jaroWinkler, levenshteinDistance, levenshteinRatio, wordSimilarity } from './matching';
 
 export function normalize(text: string | number | null | undefined): string {
   if (text === null || text === undefined) return '';
@@ -35,37 +39,6 @@ export function getCleanInvestigatorName(rawName: string | null | undefined): st
   return name;
 }
 
-// SequenceMatcher-like string similarity
-export function stringSimilarity(s1: string, s2: string): number {
-  if (s1 === s2) return 1.0;
-  if (!s1 || !s2) return 0.0;
-
-  const longer = s1.length > s2.length ? s1 : s2;
-  const shorter = s1.length > s2.length ? s2 : s1;
-  const longerLength = longer.length;
-  if (longerLength === 0) return 1.0;
-
-  // Edit distance calculation
-  const costs: number[] = [];
-  for (let i = 0; i <= longer.length; i++) {
-    let lastValue = i;
-    for (let j = 0; j <= shorter.length; j++) {
-      if (i === 0) {
-        costs[j] = j;
-      } else if (j > 0) {
-        let newValue = costs[j - 1];
-        if (longer.charAt(i - 1) !== shorter.charAt(j - 1)) {
-          newValue = Math.min(Math.min(newValue, lastValue), costs[j]) + 1;
-        }
-        costs[j - 1] = lastValue;
-        lastValue = newValue;
-      }
-    }
-    if (i > 0) costs[shorter.length] = lastValue;
-  }
-  return (longerLength - costs[shorter.length]) / longerLength;
-}
-
 export function matchQuery(
   query: string,
   excelList: ExcelRecord[],
@@ -81,21 +54,7 @@ export function matchQuery(
   const candidates: MatchCandidate[] = [];
 
   for (const ex of excelList) {
-    const exNorm = normalize(ex.debitur);
-    let score = 0.0;
-
-    if (qNorm === exNorm) {
-      score = 1.0;
-    } else if (exNorm.includes(qNorm) || qNorm.includes(exNorm)) {
-      // Substring match
-      const ratio = Math.min(qNorm.length, exNorm.length) / Math.max(qNorm.length, exNorm.length);
-      score = Math.max(0.85, ratio);
-    } else {
-      const sim = stringSimilarity(qNorm, exNorm);
-      if (sim > 0.6) {
-        score = sim;
-      }
-    }
+    let score = nameSimilarity(query, ex.debitur, true);
 
     // Also match ID Klaim or No
     if (String(ex.id_klaim) === query.trim() || `#${ex.no}` === query.trim()) {
@@ -110,12 +69,16 @@ export function matchQuery(
         candSurveyor.includes('TIDAK TERIDENTIFIKASI');
       const isExactSurveyor = Boolean(cleanTarget && !isUnassigned && candSurveyor === cleanTarget);
 
-      // Find folders for this candidate
+      // Find folders for this candidate with fuzzy support
       const candFolders: FolderRecord[] = [];
       const exNameNorm = normalize(ex.debitur);
       for (const fo of folderList) {
         const foNorm = normalize(fo.clean_name);
-        if (exNameNorm === foNorm || qNorm === foNorm) {
+        if (
+          exNameNorm === foNorm ||
+          qNorm === foNorm ||
+          nameSimilarity(ex.debitur, fo.clean_name) >= 0.85
+        ) {
           candFolders.push(fo);
         }
       }
@@ -292,17 +255,7 @@ export function searchPhysicalLocation(query: string, masterState: MasterState):
 
   for (const [surveyor, items] of Object.entries(masterState)) {
     items.forEach((it, idx) => {
-      const debNorm = normalize(it.debitur);
-      let sim = 0;
-
-      if (debNorm === qNorm) {
-        sim = 1.0;
-      } else if (debNorm.includes(qNorm) || qNorm.includes(debNorm)) {
-        sim = Math.max(0.85, qNorm.length / debNorm.length);
-      } else {
-        const s = stringSimilarity(qNorm, debNorm);
-        if (s > 0.5) sim = s;
-      }
+      let sim = nameSimilarity(query, it.debitur, true);
 
       if (String(it.id_klaim) === query.trim() || `#${it.no}` === query.trim()) {
         sim = 1.0;
