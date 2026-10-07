@@ -4,10 +4,11 @@ import { SearchView } from './components/SearchView';
 import { InsertWizardView } from './components/InsertWizardView';
 import { StatusView } from './components/StatusView';
 import { CatalogView } from './components/CatalogView';
+import { HandoverView } from './components/HandoverView';
 import { Toast, type ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem } from './types';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem, HandoverState } from './types';
 import {
   loadStored,
   saveStored,
@@ -15,9 +16,13 @@ import {
   pushServerSnapshot,
   isMasterState,
   isTransitState,
+  isHandoverState,
   backfillFolderInfo,
   addToTransit,
   removeFiledFromTransit,
+  takeItemsForHandover,
+  returnHandoverItemToMaster,
+  clearHandoverList,
   simulateHandInsertion,
   getCleanInvestigatorName,
 } from './utils/logic';
@@ -48,6 +53,15 @@ export function App() {
     save: (state) => saveStored('transit', state),
     fetchRemote: () => fetchServerSnapshot('transit', isTransitState),
     pushRemote: (state) => pushServerSnapshot('transit', state),
+    adoptEmptyRemote: true,
+  });
+
+  // Handover Lists per Surveyor (persisted locally & synced to Turso)
+  const [handoverState, setHandoverState] = useCloudSyncedState<HandoverState>({
+    load: () => loadStored('handover', isHandoverState, {}),
+    save: (state) => saveStored('handover', state),
+    fetchRemote: () => fetchServerSnapshot('handover', isHandoverState),
+    pushRemote: (state) => pushServerSnapshot('handover', state),
     adoptEmptyRemote: true,
   });
 
@@ -90,6 +104,50 @@ export function App() {
   const totalPhysicalDocs = useMemo(() => {
     return Object.values(masterState).reduce((acc, pile) => acc + pile.length, 0);
   }, [masterState]);
+
+  // Total documents in handover list
+  const totalHandoverDocs = useMemo(() => {
+    return Object.values(handoverState).reduce((acc, list) => acc + list.length, 0);
+  }, [handoverState]);
+
+  // Handover Operations
+  const handleTakeItemsForHandover = useCallback(
+    (surveyor: string, itemKeys: Set<string>) => {
+      const cleanSurv = getCleanInvestigatorName(surveyor);
+      const { nextMaster, nextHandover } = takeItemsForHandover(
+        masterState,
+        handoverState,
+        cleanSurv,
+        itemKeys
+      );
+      setMasterState(nextMaster);
+      setHandoverState(nextHandover);
+    },
+    [masterState, handoverState, setMasterState, setHandoverState]
+  );
+
+  const handleReturnHandoverItem = useCallback(
+    (surveyor: string, handoverId: string) => {
+      const cleanSurv = getCleanInvestigatorName(surveyor);
+      const { nextMaster, nextHandover } = returnHandoverItemToMaster(
+        masterState,
+        handoverState,
+        cleanSurv,
+        handoverId
+      );
+      setMasterState(nextMaster);
+      setHandoverState(nextHandover);
+    },
+    [masterState, handoverState, setMasterState, setHandoverState]
+  );
+
+  const handleClearHandover = useCallback(
+    (surveyor?: string) => {
+      const cleanSurv = surveyor ? getCleanInvestigatorName(surveyor) : undefined;
+      setHandoverState((prev) => clearHandoverList(prev, cleanSurv));
+    },
+    [setHandoverState]
+  );
 
   // Quick insertion of a single document (from Search or Status)
   const handleQuickInsertItem = (
@@ -197,6 +255,7 @@ export function App() {
         onSelectSurveyor={setActiveSurveyor}
         totalPhysicalDocs={totalPhysicalDocs}
         totalTransitDocs={totalTransitDocs}
+        totalHandoverDocs={totalHandoverDocs}
       />
 
       {/* Main Content Area */}
@@ -208,6 +267,8 @@ export function App() {
             folderList={folderRecords}
             activeSurveyor={activeSurveyor}
             onQuickInsertItem={handleQuickInsertItem}
+            onTakeForHandover={handleTakeItemsForHandover}
+            onShowToast={showToast}
           />
         )}
 
@@ -245,6 +306,19 @@ export function App() {
             activeSurveyor={activeSurveyor}
             onImportState={handleImportState}
             onRequestReset={() => setIsResetModalOpen(true)}
+            onShowToast={showToast}
+            onTakeForHandover={handleTakeItemsForHandover}
+          />
+        )}
+
+        {activeTab === 'handover' && (
+          <HandoverView
+            handoverState={handoverState}
+            masterState={masterState}
+            activeSurveyor={activeSurveyor}
+            onTakeItems={handleTakeItemsForHandover}
+            onReturnItem={handleReturnHandoverItem}
+            onClearHandover={handleClearHandover}
             onShowToast={showToast}
           />
         )}

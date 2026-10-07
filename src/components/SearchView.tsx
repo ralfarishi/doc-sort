@@ -11,6 +11,7 @@ import {
   Clock,
   PlusCircle,
   Sparkle,
+  ArrowSquareOut,
 } from '@phosphor-icons/react';
 import type { ExcelRecord, FolderRecord, MasterState } from '../types';
 import { searchPhysicalLocation, matchQuery, normalize, getCleanInvestigatorName } from '../utils/logic';
@@ -21,6 +22,8 @@ interface SearchViewProps {
   folderList: FolderRecord[];
   activeSurveyor: string;
   onQuickInsertItem: (surveyor: string, excelItem: ExcelRecord, folderItem?: FolderRecord) => void;
+  onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
+  onShowToast?: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
 }
 
 export const SearchView: React.FC<SearchViewProps> = ({
@@ -29,6 +32,8 @@ export const SearchView: React.FC<SearchViewProps> = ({
   folderList,
   activeSurveyor,
   onQuickInsertItem,
+  onTakeForHandover,
+  onShowToast,
 }) => {
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<'all' | 'desk' | 'excel'>('all');
@@ -231,6 +236,26 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           </div>
                         </div>
                       </div>
+
+                      {onTakeForHandover && (
+                        <div className="pt-2 border-t border-[#F6F2EB] flex justify-end">
+                          <button
+                            onClick={() => {
+                              const key = `${it.jenis_case}#${it.no}`;
+                              onTakeForHandover(res.surveyor, new Set([key]));
+                              onShowToast?.(
+                                'success',
+                                'Berkas Diambil',
+                                `${it.debitur} dikeluarkan dari meja ${res.surveyor} dan masuk ke daftar penyerahan.`
+                              );
+                            }}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#FDF1ED] text-xs font-bold text-[#D97757] border border-[#F7D0C4] transition-colors"
+                          >
+                            <ArrowSquareOut size={15} weight="bold" />
+                            <span>Ambil untuk Diserahkan</span>
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}

@@ -7,10 +7,11 @@ import {
   FolderSimple,
   CaretDown,
   Check,
+  Printer,
 } from '@phosphor-icons/react';
 import { BottomSheet } from './BottomSheet';
 
-export type ActiveTab = 'search' | 'insert' | 'status' | 'catalog';
+export type ActiveTab = 'search' | 'insert' | 'status' | 'catalog' | 'handover';
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -20,6 +21,7 @@ interface NavbarProps {
   onSelectSurveyor: (surveyor: string) => void;
   totalPhysicalDocs: number;
   totalTransitDocs?: number;
+  totalHandoverDocs?: number;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +32,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSelectSurveyor,
   totalPhysicalDocs,
   totalTransitDocs = 0,
+  totalHandoverDocs = 0,
 }) => {
   const [isOrdnerSheetOpen, setIsOrdnerSheetOpen] = useState(false);
 
@@ -38,12 +41,13 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'insert' as ActiveTab, label: 'Sisip & Susun', icon: Tray, badge: totalTransitDocs },
     { id: 'status' as ActiveTab, label: 'Status Ordner', icon: ChartBar },
     { id: 'catalog' as ActiveTab, label: 'Katalog A-Z', icon: ListDashes },
+    { id: 'handover' as ActiveTab, label: 'Penyerahan', icon: Printer, badge: totalHandoverDocs },
   ];
 
   return (
     <>
       {/* Top Header */}
-      <header className="sticky top-0 z-40 bg-[#FFFFFF] border-b border-[#EAE4DC] px-4 py-2.5 sm:px-6">
+      <header className="print:hidden sticky top-0 z-40 bg-[#FFFFFF] border-b border-[#EAE4DC] px-4 py-2.5 sm:px-6">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
           {/* Logo & Subtitle */}
           <div className="flex items-center gap-2.5 min-w-0">
@@ -103,8 +107,8 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {/* Mobile Bottom Navigation Bar */}
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-2 py-1 pb-[max(0.4rem,env(safe-area-inset-bottom))]">
-        <div className="grid grid-cols-4 gap-1">
+      <nav className="print:hidden md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-1 py-1 pb-[max(0.4rem,env(safe-area-inset-bottom))]">
+        <div className="grid grid-cols-5 gap-0.5">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;

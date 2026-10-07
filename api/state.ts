@@ -29,6 +29,15 @@ const SCOPES = {
       typeof it.debitur === 'string' &&
       typeof it.targetSurveyor === 'string',
   },
+  handover: {
+    table: 'physical_handover_lists',
+    maxItems: 1000,
+    allowEmpty: true,
+    isItem: (it: Record<string, unknown>) =>
+      typeof it.id === 'string' &&
+      typeof it.debitur === 'string' &&
+      typeof it.surveyor === 'string',
+  },
 } as const;
 
 type Scope = keyof typeof SCOPES;

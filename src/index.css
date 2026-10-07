@@ -57,3 +57,15 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: #B8ADA0;
 }
+
+@media print {
+  body {
+    background-color: #FFFFFF !important;
+    color: #000000 !important;
+  }
+  main {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+}

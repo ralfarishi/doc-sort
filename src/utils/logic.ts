@@ -1,8 +1,8 @@
-import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState } from '../types';
-import { nameSimilarity, normalizeName, stringSimilarity } from './matching';
+import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState, HandoverItem, HandoverState } from '../types';
+import { nameSimilarity, normalizeName, stringSimilarity } from './matching.ts';
 
 export { nameSimilarity, normalizeName, stringSimilarity };
-export { jaroSimilarity, jaroWinkler, levenshteinDistance, levenshteinRatio, wordSimilarity } from './matching';
+export { jaroSimilarity, jaroWinkler, levenshteinDistance, levenshteinRatio, wordSimilarity } from './matching.ts';
 
 export function normalize(text: string | number | null | undefined): string {
   if (text === null || text === undefined) return '';
@@ -319,15 +319,27 @@ export function isTransitState(value: unknown): value is TransitState {
   );
 }
 
+/** Runtime check that an unknown value is a well-formed HandoverState (surveyor -> HandoverItem[]). */
+export function isHandoverState(value: unknown): value is HandoverState {
+  return isSnapshotOf(
+    value,
+    (it) =>
+      typeof it.id === 'string' &&
+      typeof it.debitur === 'string' &&
+      typeof it.surveyor === 'string'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Persistence: localStorage + cloud (Turso via /api/state?scope=...)
 // ---------------------------------------------------------------------------
 
-export type SyncScope = 'master' | 'transit';
+export type SyncScope = 'master' | 'transit' | 'handover';
 
 const STORAGE_KEYS: Record<SyncScope, string> = {
   master: 'ORGANIZER_FISIK_MASTER_STATE_V3',
   transit: 'ORGANIZER_FISIK_TRANSIT_STATE_V1',
+  handover: 'ORGANIZER_FISIK_HANDOVER_STATE_V1',
 };
 
 const apiUrl = (scope: SyncScope) => `/api/state?scope=${scope}`;
@@ -470,4 +482,131 @@ export function removeFiledFromTransit(transit: TransitState, surveyor: string, 
   else delete next[surveyor];
   return next;
 }
+
+// ---------------------------------------------------------------------------
+// Handover (Penyerahan Dokumen) helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Extracts items from the surveyor's master pile to the handover list.
+ * Automatically compacts and re-indexes the remaining pile.
+ * Preserves top-to-bottom physical pile order ("urutan atas adalah tumpukan atas").
+ */
+export function takeItemsForHandover(
+  master: MasterState,
+  handover: HandoverState,
+  surveyor: string,
+  targetKeys: Set<string>
+): { nextMaster: MasterState; nextHandover: HandoverState; takenItems: HandoverItem[] } {
+  const currentPile = master[surveyor] ?? [];
+  if (currentPile.length === 0 || targetKeys.size === 0) {
+    return { nextMaster: master, nextHandover: handover, takenItems: [] };
+  }
+
+  const remainingPile: MasterItem[] = [];
+  const newlyTaken: HandoverItem[] = [];
+
+  currentPile.forEach((it, idx) => {
+    const key = `${it.jenis_case}#${it.no}`;
+    if (targetKeys.has(key)) {
+      newlyTaken.push({
+        id: createId(),
+        debitur: it.debitur,
+        no: it.no,
+        id_klaim: it.id_klaim,
+        kota: it.kota,
+        wilayah: it.wilayah,
+        jenis_case: it.jenis_case,
+        surveyor,
+        originalPosition: idx + 1,
+        item_data: it,
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      remainingPile.push(it);
+    }
+  });
+
+  if (newlyTaken.length === 0) {
+    return { nextMaster: master, nextHandover: handover, takenItems: [] };
+  }
+
+  const nextMaster: MasterState = {
+    ...master,
+    [surveyor]: remainingPile,
+  };
+
+  // Combine with existing handover items for this surveyor,
+  // sorted so that "urutan atas adalah tumpukan atas" (A-Z / top-to-bottom physical order)
+  const existingHandover = handover[surveyor] ?? [];
+  const combined = [...existingHandover, ...newlyTaken].sort((a, b) => {
+    return normalize(a.debitur).localeCompare(normalize(b.debitur));
+  });
+
+  const nextHandover: HandoverState = {
+    ...handover,
+    [surveyor]: combined,
+  };
+
+  return { nextMaster, nextHandover, takenItems: newlyTaken };
+}
+
+/**
+ * Restores a previously taken item from the handover list back into the surveyor's master pile.
+ * Re-inserts the item in its proper alphabetical (A-Z) position in the physical pile.
+ */
+export function returnHandoverItemToMaster(
+  master: MasterState,
+  handover: HandoverState,
+  surveyor: string,
+  handoverId: string
+): { nextMaster: MasterState; nextHandover: HandoverState; returnedItem?: MasterItem } {
+  const currentHandover = handover[surveyor] ?? [];
+  const targetIdx = currentHandover.findIndex((h) => h.id === handoverId);
+  if (targetIdx === -1) {
+    return { nextMaster: master, nextHandover: handover };
+  }
+
+  const itemToReturn = currentHandover[targetIdx];
+  const nextHandoverList = currentHandover.filter((_, idx) => idx !== targetIdx);
+
+  const nextHandover: HandoverState = { ...handover };
+  if (nextHandoverList.length > 0) {
+    nextHandover[surveyor] = nextHandoverList;
+  } else {
+    delete nextHandover[surveyor];
+  }
+
+  // Insert back into master pile in alphabetical order (A-Z)
+  const pile = [...(master[surveyor] ?? [])];
+  const debNorm = normalize(itemToReturn.item_data.debitur);
+  let insertIdx = 0;
+  while (insertIdx < pile.length && normalize(pile[insertIdx].debitur) < debNorm) {
+    insertIdx++;
+  }
+  pile.splice(insertIdx, 0, itemToReturn.item_data);
+
+  const nextMaster: MasterState = {
+    ...master,
+    [surveyor]: pile,
+  };
+
+  return { nextMaster, nextHandover, returnedItem: itemToReturn.item_data };
+}
+
+/**
+ * Clears handover list for a surveyor, or all surveyors if surveyor is omitted or 'ALL'.
+ */
+export function clearHandoverList(
+  handover: HandoverState,
+  surveyor?: string
+): HandoverState {
+  if (!surveyor || surveyor === 'ALL') {
+    return {};
+  }
+  const next = { ...handover };
+  delete next[surveyor];
+  return next;
+}
+
 

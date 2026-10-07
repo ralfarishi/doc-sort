@@ -7,6 +7,9 @@ import {
   ArrowsClockwise,
   MagnifyingGlass,
   XCircle,
+  ArrowSquareOut,
+  CheckSquare,
+  Square,
 } from '@phosphor-icons/react';
 import type { MasterState } from '../types';
 import { exportStateToJson, isMasterState } from '../utils/logic';
@@ -18,6 +21,7 @@ interface CatalogViewProps {
   onImportState: (newState: MasterState) => void;
   onRequestReset: () => void;
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
+  onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
 }
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
@@ -26,11 +30,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
   onImportState,
   onRequestReset,
   onShowToast,
+  onTakeForHandover,
 }) => {
   const [searchFilter, setSearchFilter] = useState('');
   const [caseFilter, setCaseFilter] = useState('ALL');
   const [wilayahFilter, setWilayahFilter] = useState('ALL');
   const [isActionSheetOpen, setIsActionSheetOpen] = useState(false);
+  const [isSelectMode, setIsSelectMode] = useState(false);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(new Set());
 
   const currentItems = useMemo(
     () => masterState[activeSurveyor] ?? [],
@@ -133,15 +140,82 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </div>
           </div>
 
-          {/* Single Action Sheet Menu Button */}
-          <button
-            onClick={() => setIsActionSheetOpen(true)}
-            className="w-9 h-9 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] flex items-center justify-center transition-colors shrink-0"
-            title="Menu Aksi & Ekspor"
-          >
-            <DotsThreeVertical size={18} weight="bold" />
-          </button>
+          {/* Action Buttons */}
+          <div className="flex items-center gap-1.5 shrink-0">
+            {onTakeForHandover && currentItems.length > 0 && !isSelectMode && (
+              <button
+                onClick={() => setIsSelectMode(true)}
+                className="px-2.5 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-xs font-semibold text-[#2D2824] flex items-center gap-1.5 transition-colors shrink-0"
+                title="Pilih beberapa berkas untuk diserahkan"
+              >
+                <ArrowSquareOut size={15} />
+                <span>Ambil Berkas</span>
+              </button>
+            )}
+
+            {/* Single Action Sheet Menu Button */}
+            <button
+              onClick={() => setIsActionSheetOpen(true)}
+              className="w-9 h-9 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] flex items-center justify-center transition-colors shrink-0"
+              title="Menu Aksi & Ekspor"
+            >
+              <DotsThreeVertical size={18} weight="bold" />
+            </button>
+          </div>
         </div>
+
+        {/* Multi-Select Action Bar */}
+        {isSelectMode && (
+          <div className="flex items-center justify-between bg-[#FDF1ED] border border-[#F7D0C4] rounded-xl px-3 py-2 text-xs">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  if (selectedKeys.size === filteredItems.length && filteredItems.length > 0) {
+                    setSelectedKeys(new Set());
+                  } else {
+                    setSelectedKeys(new Set(filteredItems.map((it) => `${it.jenis_case}#${it.no}`)));
+                  }
+                }}
+                className="text-[#D97757] font-bold hover:underline"
+              >
+                {selectedKeys.size === filteredItems.length && filteredItems.length > 0
+                  ? 'Batal Semua'
+                  : 'Pilih Semua'}
+              </button>
+              <span className="text-[#79716B]">({selectedKeys.size} dipilih)</span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  setIsSelectMode(false);
+                  setSelectedKeys(new Set());
+                }}
+                className="px-2.5 py-1 rounded-lg text-[#79716B] hover:text-[#2D2824]"
+              >
+                Batal
+              </button>
+              <button
+                onClick={() => {
+                  if (selectedKeys.size === 0) return;
+                  const count = selectedKeys.size;
+                  onTakeForHandover?.(activeSurveyor, selectedKeys);
+                  setSelectedKeys(new Set());
+                  setIsSelectMode(false);
+                  onShowToast('success', 'Berkas Diambil', `${count} berkas dipindahkan ke Daftar Penyerahan.`);
+                }}
+                disabled={selectedKeys.size === 0}
+                className={`px-3 py-1 rounded-lg font-bold text-white transition-colors ${
+                  selectedKeys.size > 0
+                    ? 'bg-[#D97757] hover:bg-[#C26344]'
+                    : 'bg-[#EAE4DC] text-[#79716B] cursor-not-allowed'
+                }`}
+              >
+                Ambil ({selectedKeys.size})
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Compact Search Bar */}
         <div className="relative flex items-center">
@@ -223,13 +297,40 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           <div className="grid gap-2">
             {filteredItems.map((it, idx) => {
               const sticker = `[${activeSurveyor.slice(0, 6)}] ${it.jenis_case} No.${it.no} - ${it.debitur}`;
+              const itemKey = `${it.jenis_case}#${it.no}`;
+              const isSelected = selectedKeys.has(itemKey);
 
               return (
                 <div
-                  key={idx}
-                  className="bg-[#FFFFFF] border border-[#EAE4DC] hover:border-[#D97757] rounded-2xl p-3 shadow-xs transition-all flex items-center justify-between gap-3"
+                  key={itemKey}
+                  className={`bg-[#FFFFFF] border rounded-2xl p-3 shadow-xs transition-all flex items-center justify-between gap-3 ${
+                    isSelected
+                      ? 'border-[#D97757] bg-[#FDF1ED]'
+                      : 'border-[#EAE4DC] hover:border-[#D97757]'
+                  }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
+                    {/* Checkbox in select mode */}
+                    {isSelectMode && (
+                      <button
+                        onClick={() => {
+                          setSelectedKeys((prev) => {
+                            const next = new Set(prev);
+                            if (next.has(itemKey)) next.delete(itemKey);
+                            else next.add(itemKey);
+                            return next;
+                          });
+                        }}
+                        className="text-[#D97757] p-1 shrink-0"
+                      >
+                        {isSelected ? (
+                          <CheckSquare size={20} weight="fill" />
+                        ) : (
+                          <Square size={20} />
+                        )}
+                      </button>
+                    )}
+
                     {/* Index Badge */}
                     <div className="w-8 h-8 rounded-xl bg-[#F6F2EB] text-[#2D2824] font-extrabold flex items-center justify-center shrink-0 text-xs">
                       #{idx + 1}
@@ -254,17 +355,38 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Copy Sticker Label Action */}
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(sticker);
-                      onShowToast('info', 'Label Stiker Disalin', sticker);
-                    }}
-                    className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] transition-colors shrink-0"
-                    title={`Salin Stiker: ${sticker}`}
-                  >
-                    <Copy size={16} />
-                  </button>
+                  {/* Actions */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {/* Take for Handover Button (Single) */}
+                    {onTakeForHandover && !isSelectMode && (
+                      <button
+                        onClick={() => {
+                          onTakeForHandover(activeSurveyor, new Set([itemKey]));
+                          onShowToast(
+                            'success',
+                            'Berkas Diambil',
+                            `${it.debitur} dikeluarkan dari tumpukan meja dan masuk ke daftar penyerahan.`
+                          );
+                        }}
+                        className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#FDF1ED] text-[#79716B] hover:text-[#D97757] transition-colors"
+                        title="Ambil berkas ini untuk diserahkan"
+                      >
+                        <ArrowSquareOut size={16} />
+                      </button>
+                    )}
+
+                    {/* Copy Sticker Label Action */}
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(sticker);
+                        onShowToast('info', 'Label Stiker Disalin', sticker);
+                      }}
+                      className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] transition-colors"
+                      title={`Salin Stiker: ${sticker}`}
+                    >
+                      <Copy size={16} />
+                    </button>
+                  </div>
                 </div>
               );
             })}

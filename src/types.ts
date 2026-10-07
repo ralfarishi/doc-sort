@@ -90,3 +90,20 @@ export interface TransitItem {
 }
 
 export type TransitState = Record<string, TransitItem[]>;
+
+export interface HandoverItem {
+  id: string;
+  debitur: string;
+  no: number | string;
+  id_klaim: number | string;
+  kota: string;
+  wilayah: string;
+  jenis_case: string;
+  surveyor: string;
+  originalPosition: number;
+  item_data: MasterItem;
+  timestamp: string;
+}
+
+export type HandoverState = Record<string, HandoverItem[]>;
+
