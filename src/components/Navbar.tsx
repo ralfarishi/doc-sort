@@ -41,7 +41,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'insert' as ActiveTab, label: 'Sisip & Susun', icon: Tray, badge: totalTransitDocs },
     { id: 'status' as ActiveTab, label: 'Status Ordner', icon: ChartBar },
     { id: 'catalog' as ActiveTab, label: 'Katalog A-Z', icon: ListDashes },
-    { id: 'handover' as ActiveTab, label: 'Penyerahan', icon: Printer, badge: totalHandoverDocs },
+    { id: 'handover' as ActiveTab, label: 'Berkas Diambil', icon: Printer, badge: totalHandoverDocs },
   ];
 
   return (

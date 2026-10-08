@@ -12,6 +12,7 @@ import {
 } from '@phosphor-icons/react';
 import type { HandoverState, MasterState } from '../types';
 import { BottomSheet } from './BottomSheet';
+import { ConfirmModal } from './ConfirmModal';
 
 interface HandoverViewProps {
   handoverState: HandoverState;
@@ -42,6 +43,7 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   const [pickerSearch, setPickerSearch] = useState('');
   const [selectedPickerKeys, setSelectedPickerKeys] = useState<Set<string>>(new Set());
+  const [isClearModalOpen, setIsClearModalOpen] = useState(false);
 
   // Surveyors that currently have handover items
   const activeHandoverSurveyors = useMemo(() => {
@@ -110,16 +112,22 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
     onShowToast(
       'success',
       'Berkas Berhasil Diambil',
-      `${count} berkas dikeluarkan dari tumpukan meja dan masuk ke daftar penyerahan.`
+      `${count} berkas dikeluarkan dari tumpukan meja dan masuk ke daftar pengambilan.`
     );
   };
 
   const handlePrint = () => {
     if (totalHandoverCount === 0) {
-      onShowToast('warning', 'Daftar Kosong', 'Tidak ada dokumen dalam daftar penyerahan untuk dicetak.');
+      onShowToast('warning', 'Daftar Kosong', 'Tidak ada dokumen dalam daftar pengambilan untuk dicetak.');
       return;
     }
     window.print();
+  };
+
+  const handleConfirmClear = () => {
+    onClearHandover(selectedSurveyorFilter === 'ALL' ? undefined : selectedSurveyorFilter);
+    setIsClearModalOpen(false);
+    onShowToast('info', 'Daftar Dikosongkan', 'Semua berkas pengambilan telah dibersihkan.');
   };
 
   return (
@@ -131,11 +139,11 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-[#D97757]" />
               <h2 className="text-base sm:text-lg font-bold text-[#2D2824]">
-                Daftar Penyerahan Dokumen
+                Daftar Dokumen Diambil
               </h2>
             </div>
             <p className="text-xs text-[#79716B] mt-1">
-              Urutan atas adalah tumpukan atas meja. Daftar ini siap dicetak sebagai panduan berkas yang diserahkan.
+              Urutan atas adalah tumpukan atas meja. Daftar ini siap dicetak sebagai panduan berkas yang diambil.
             </p>
           </div>
 
@@ -167,14 +175,9 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
 
             {totalHandoverCount > 0 && (
               <button
-                onClick={() => {
-                  if (window.confirm('Kosongkan semua berkas dari daftar penyerahan?')) {
-                    onClearHandover(selectedSurveyorFilter === 'ALL' ? undefined : selectedSurveyorFilter);
-                    onShowToast('info', 'Daftar Dikosongkan', 'Semua berkas penyerahan telah dibersihkan.');
-                  }
-                }}
+                onClick={() => setIsClearModalOpen(true)}
                 className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#FBEBEB] text-[#79716B] hover:text-[#C84C4C] transition-colors"
-                title="Kosongkan Daftar Penyerahan"
+                title="Kosongkan Daftar"
               >
                 <Trash size={16} />
               </button>
@@ -215,40 +218,42 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
         )}
       </div>
 
-      {/* PRINT-ONLY HEADER (Only visible when printing) */}
-      <div className="hidden print:block mb-4 pb-2 border-b-2 border-black">
-        <h1 className="text-lg font-black tracking-tight text-black uppercase">
-          DAFTAR PENYERAHAN DOKUMEN FISIK
-        </h1>
-        <div className="flex justify-between items-center text-xs text-black mt-1">
-          <span>* Catatan: Urutan nomor atas adalah dokumen tumpukan paling atas.</span>
-          <span>Dicetak: {PRINT_DATE_STRING}</span>
+      {/* PRINT-ONLY HEADER: Ringkas, tanpa page break, menyatu rapi */}
+      <div className="hidden print:block mb-2 pb-1.5 border-b-2 border-black">
+        <div className="flex justify-between items-baseline">
+          <h1 className="text-base font-black tracking-tight text-black uppercase">
+            DAFTAR URUTAN DOKUMEN FISIK
+          </h1>
+          <span className="text-[10px] text-black">Dicetak: {PRINT_DATE_STRING}</span>
         </div>
+        <p className="text-[10px] text-black mt-0.5">
+          * Urutan nomor atas adalah dokumen tumpukan paling atas.
+        </p>
       </div>
 
       {/* CONTENT LIST / TABLES */}
       {displayGroups.length > 0 ? (
-        <div className="space-y-6">
+        <div className="space-y-6 print:space-y-4">
           {displayGroups.map((group) => (
             <div
               key={group.surveyor}
-              className="bg-[#FFFFFF] border border-[#EAE4DC] print:border-black rounded-2xl print:rounded-none overflow-hidden shadow-xs print:shadow-none break-inside-avoid"
+              className="bg-[#FFFFFF] border border-[#EAE4DC] print:border-black rounded-2xl print:rounded-none overflow-hidden shadow-xs print:shadow-none"
             >
               {/* Group Surveyor Header */}
-              <div className="bg-[#FAF8F5] print:bg-gray-100 border-b border-[#EAE4DC] print:border-black px-4 py-2.5 flex items-center justify-between">
+              <div className="bg-[#FAF8F5] print:bg-gray-100 border-b border-[#EAE4DC] print:border-black px-4 py-2.5 print:py-1.5 print:px-2 flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="font-extrabold text-xs sm:text-sm text-[#2D2824] print:text-black uppercase tracking-wide">
+                  <span className="font-extrabold text-xs sm:text-sm print:text-xs text-[#2D2824] print:text-black uppercase tracking-wide">
                     SURVEYOR: {group.surveyor}
                   </span>
                 </div>
-                <span className="text-[11px] font-semibold text-[#79716B] print:text-black">
+                <span className="text-[11px] print:text-[10px] font-semibold text-[#79716B] print:text-black">
                   Total: {group.items.length} Berkas
                 </span>
               </div>
 
               {/* Table */}
               <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
+                <table className="w-full text-left text-xs border-collapse print-table">
                   <thead>
                     <tr className="border-b border-[#EAE4DC] print:border-black text-[11px] text-[#79716B] print:text-black uppercase bg-[#FFFFFF] print:bg-white font-bold">
                       <th className="py-2.5 px-3 w-12 text-center">No</th>
@@ -270,18 +275,18 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
                         </td>
 
                         {/* Debitur */}
-                        <td className="py-2 px-3 font-semibold text-xs sm:text-sm">
+                        <td className="py-2 px-3 font-semibold text-xs sm:text-sm print:text-[11px]">
                           {it.debitur}
                         </td>
 
                         {/* Wilayah */}
-                        <td className="py-2 px-3 text-xs text-[#79716B] print:text-black">
+                        <td className="py-2 px-3 text-xs text-[#79716B] print:text-black print:text-[11px]">
                           {it.wilayah || it.kota || '-'}
                         </td>
 
                         {/* Jenis Case */}
                         <td className="py-2 px-3 text-center">
-                          <span className="inline-block px-2 py-0.5 rounded-md font-bold text-[11px] bg-[#F6F2EB] print:bg-transparent text-[#D97757] print:text-black border print:border-black border-[#EAE4DC]">
+                          <span className="inline-block px-2 py-0.5 rounded-md font-bold text-[11px] bg-[#F6F2EB] print:bg-transparent text-[#D97757] print:text-black border print:border-0 border-[#EAE4DC] print-badge">
                             Case {it.jenis_case}
                           </span>
                         </td>
@@ -448,6 +453,18 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
           </div>
         </div>
       </BottomSheet>
+
+      {/* CONFIRM MODAL: Zero browser alert/confirm (Carmack rule) */}
+      <ConfirmModal
+        isOpen={isClearModalOpen}
+        title="Kosongkan Daftar Dokumen"
+        message="Apakah Anda yakin ingin mengosongkan semua berkas dari daftar ini? Dokumen yang belum diproses tidak akan hilang dari database."
+        confirmLabel="Ya, Kosongkan"
+        cancelLabel="Batal"
+        isDestructive={true}
+        onConfirm={handleConfirmClear}
+        onCancel={() => setIsClearModalOpen(false)}
+      />
     </div>
   );
 };

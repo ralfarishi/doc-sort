@@ -202,7 +202,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                   onTakeForHandover?.(activeSurveyor, selectedKeys);
                   setSelectedKeys(new Set());
                   setIsSelectMode(false);
-                  onShowToast('success', 'Berkas Diambil', `${count} berkas dipindahkan ke Daftar Penyerahan.`);
+                  onShowToast('success', 'Berkas Diambil', `${count} berkas dipindahkan ke Daftar Pengambilan.`);
                 }}
                 disabled={selectedKeys.size === 0}
                 className={`px-3 py-1 rounded-lg font-bold text-white transition-colors ${
@@ -365,7 +365,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                           onShowToast(
                             'success',
                             'Berkas Diambil',
-                            `${it.debitur} dikeluarkan dari tumpukan meja dan masuk ke daftar penyerahan.`
+                            `${it.debitur} dikeluarkan dari tumpukan meja dan masuk ke daftar pengambilan.`
                           );
                         }}
                         className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#FDF1ED] text-[#79716B] hover:text-[#D97757] transition-colors"

@@ -246,7 +246,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
                               onShowToast?.(
                                 'success',
                                 'Berkas Diambil',
-                                `${it.debitur} dikeluarkan dari meja ${res.surveyor} dan masuk ke daftar penyerahan.`
+                                `${it.debitur} dikeluarkan dari meja ${res.surveyor} dan masuk ke daftar pengambilan.`
                               );
                             }}
                             className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#FDF1ED] text-xs font-bold text-[#D97757] border border-[#F7D0C4] transition-colors"
