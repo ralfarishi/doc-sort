@@ -14,6 +14,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOCAL_SCOPES = {
   master: { file: '../tumpukan_master.json', allowEmpty: false, missing: null },
   transit: { file: '../tumpukan_transit.json', allowEmpty: true, missing: '{}' },
+  handover: { file: '../tumpukan_handover.json', allowEmpty: true, missing: '{}' },
 } as const
 
 type LocalScope = keyof typeof LOCAL_SCOPES
