@@ -14,8 +14,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Real dataset paths (relative to web/src/utils/ -> root is ../../../)
-const MASTER_JSON_PATH = path.resolve(__dirname, '../../../tumpukan_master.json');
+// Real dataset paths (bundled web static master fixture and indexed data)
+const MASTER_JSON_PATH = path.resolve(__dirname, '../data/tumpukan_master.json');
 const INDEXED_JSON_PATH = path.resolve(__dirname, '../../../indexed_visit_data.json');
 
 const realMaster = JSON.parse(fs.readFileSync(MASTER_JSON_PATH, 'utf8'));
@@ -172,7 +172,7 @@ test('Real Data: Pencarian fisik dan status penyerahan pada ACHMAD RIDWAN', () =
   assert.strictEqual(nextHandover[surveyor][0].jenis_case, '147');
 
   // Cek langsung pada tumpukan fisik master setelah berkas diambil:
-  // Item di posisi index 4 (urutan fisik #5) sekarang bergeser ke item ke-6 asli ('DADANG...')
+  // Item di posisi index 4 (urutan fisik #5) sekarang bergeser ke item ke-6 asli ('CICIH')
   assert.strictEqual(
     nextMaster[surveyor][4].debitur,
     initialPile[5].debitur,

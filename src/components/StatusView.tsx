@@ -7,14 +7,16 @@ import {
   MagnifyingGlass,
   PlusCircle,
   CaretRight,
+  Archive,
 } from '@phosphor-icons/react';
-import type { ExcelRecord, MasterState, TransitState } from '../types';
+import type { ExcelRecord, MasterState, TransitState, HandoverHistoryState } from '../types';
 import { getCleanInvestigatorName, normalize } from '../utils/logic';
 import { BottomSheet } from './BottomSheet';
 
 interface StatusViewProps {
   masterState: MasterState;
   transitState: TransitState;
+  historyState?: HandoverHistoryState;
   excelList: ExcelRecord[];
   onSelectSurveyor: (surveyor: string) => void;
   onNavigateToInsert: (surveyor: string, prefillDebtors: string[]) => void;
@@ -24,6 +26,7 @@ interface StatusViewProps {
 export const StatusView: React.FC<StatusViewProps> = ({
   masterState,
   transitState,
+  historyState = {},
   excelList,
   onSelectSurveyor,
   onNavigateToInsert,
@@ -55,27 +58,40 @@ export const StatusView: React.FC<StatusViewProps> = ({
 
   // Combined list of all known investigators
   const allInvestigators = useMemo(() => {
-    const set = new Set<string>([...Object.keys(masterState), ...Object.keys(surveyorTargets)]);
+    const set = new Set<string>([
+      ...Object.keys(masterState),
+      ...Object.keys(surveyorTargets),
+      ...Object.keys(historyState),
+    ]);
     return Array.from(set).filter(
       (s) => s && s !== 'BELUM DITUGASKAN' && s !== 'TIDAK TERIDENTIFIKASI'
     ).sort();
-  }, [masterState, surveyorTargets]);
+  }, [masterState, surveyorTargets, historyState]);
 
   // Global counts
   const totalFisik = Object.values(masterState).reduce((acc, pile) => acc + pile.length, 0);
-  const totalVisited = excelList.filter((x) => String(x.visit).toUpperCase() === 'YES').length;
+  const totalDiserahkan = Object.values(historyState).reduce((acc, list) => acc + list.length, 0);
 
   // Selected surveyor's missing documents for Bottom Sheet
   const activeDetailData = useMemo(() => {
     if (!selectedSurveyorDetail) return null;
     const inv = selectedSurveyorDetail;
     const currentPile = masterState[inv] || [];
+    const historyPile = historyState[inv] || [];
     const targetData = surveyorTargets[inv] || { total: 0, visited: 0, records: [] };
 
     const currentDebSet = new Set(currentPile.map((p) => normalize(p.debitur)));
+    const historyDebSet = new Set(historyPile.map((h) => normalize(h.debitur)));
+
+    // Missing from both desk and handover
     const missingRecords = targetData.records.filter(
-      (r) => !currentDebSet.has(normalize(r.debitur))
+      (r) => !currentDebSet.has(normalize(r.debitur)) && !historyDebSet.has(normalize(r.debitur))
     );
+
+    const curCount = currentPile.length;
+    const historyCount = historyPile.length;
+    const tarCount = targetData.visited > 0 ? targetData.visited : targetData.total;
+    const dynamicTarget = Math.max(tarCount, curCount + historyCount);
 
     const filteredMissing = missingRecords.filter(
       (m) =>
@@ -86,12 +102,14 @@ export const StatusView: React.FC<StatusViewProps> = ({
 
     return {
       inv,
-      curCount: currentPile.length,
-      tarCount: targetData.visited > 0 ? targetData.visited : targetData.total,
+      curCount,
+      historyCount,
+      tarCount,
+      dynamicTarget,
       missingRecords,
       filteredMissing,
     };
-  }, [selectedSurveyorDetail, masterState, surveyorTargets, sheetSearchQuery]);
+  }, [selectedSurveyorDetail, masterState, historyState, surveyorTargets, sheetSearchQuery]);
 
   return (
     <div className="space-y-4">
@@ -108,22 +126,20 @@ export const StatusView: React.FC<StatusViewProps> = ({
         </div>
 
         <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-3 shadow-xs">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#548A70]">
-            Sudah Divisit
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#388A6E]">
+            Sudah Diserahkan
           </span>
-          <p className="text-xl font-extrabold text-[#548A70] mt-0.5">
-            {totalVisited}
+          <p className="text-xl font-extrabold text-[#388A6E] mt-0.5">
+            {totalDiserahkan}
           </p>
-          <span className="text-[10px] text-[#79716B]">
-            {((totalVisited / excelList.length) * 100).toFixed(0)}% Progress
-          </span>
+          <span className="text-[10px] text-[#79716B]">Arsip Berkas Selesai</span>
         </div>
 
         <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-3 shadow-xs">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-[#D97757]">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-[#4A78A6]">
             Fisik di Meja
           </span>
-          <p className="text-xl font-extrabold text-[#D97757] mt-0.5">
+          <p className="text-xl font-extrabold text-[#4A78A6] mt-0.5">
             {totalFisik}
           </p>
           <span className="text-[10px] text-[#79716B]">Terdata di Ordner</span>
@@ -142,41 +158,73 @@ export const StatusView: React.FC<StatusViewProps> = ({
 
       {/* Investigator Cards List */}
       <div className="space-y-2.5">
-        <h2 className="text-xs font-bold text-[#79716B] uppercase tracking-wider px-1">
-          Kelengkapan Fisik per Investigator
-        </h2>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 px-1">
+          <h2 className="text-xs font-bold text-[#79716B] uppercase tracking-wider">
+            Kelengkapan Fisik per Investigator
+          </h2>
+          <div className="flex items-center gap-3 text-[10px] text-[#79716B] shrink-0">
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-[#388A6E] shrink-0" /> Diserahkan
+            </span>
+            <span className="inline-flex items-center gap-1 whitespace-nowrap">
+              <span className="w-2 h-2 rounded-full bg-[#4A78A6] shrink-0" /> Di Meja
+            </span>
+          </div>
+        </div>
 
         <div className="grid gap-2.5">
           {allInvestigators.map((inv) => {
             const currentPile = masterState[inv] || [];
+            const historyPile = historyState[inv] || [];
             const targetData = surveyorTargets[inv] || { total: 0, visited: 0, records: [] };
             const curCount = currentPile.length;
+            const histCount = historyPile.length;
+            const accountedCount = curCount + histCount;
             const tarCount = targetData.visited > 0 ? targetData.visited : targetData.total;
-            const pct = tarCount > 0 ? Math.min(100, (curCount / tarCount) * 100) : 0;
+            const dynamicTarget = Math.max(tarCount, accountedCount);
+            const accountedPct = dynamicTarget > 0 ? Math.min(100, (accountedCount / dynamicTarget) * 100) : 0;
 
             let statusBadge = (
               <span className="px-2 py-0.5 rounded-lg bg-[#F6F2EB] text-[#79716B] text-[11px] font-bold">
                 BELUM ADA
               </span>
             );
-            let barColor = 'bg-[#DCD3C7]';
 
-            if (curCount >= tarCount && tarCount > 0) {
+            if (accountedCount >= dynamicTarget && dynamicTarget > 0) {
               statusBadge = (
-                <span className="px-2 py-0.5 rounded-lg bg-[#EEF6F1] text-[#548A70] text-[11px] font-bold flex items-center gap-1">
+                <span className="px-2 py-0.5 rounded-lg bg-[#EEF6F1] text-[#388A6E] text-[11px] font-bold flex items-center gap-1">
                   <CheckCircle size={13} weight="bold" />
                   LENGKAP
                 </span>
               );
-              barColor = 'bg-[#548A70]';
-            } else if (curCount > 0) {
+            } else if (accountedCount > 0) {
               statusBadge = (
                 <span className="px-2 py-0.5 rounded-lg bg-[#FCF7ED] text-[#C48A3F] text-[11px] font-bold flex items-center gap-1">
                   <Clock size={13} weight="bold" />
                   PROGRES
                 </span>
               );
-              barColor = 'bg-[#C48A3F]';
+            }
+
+            // Ratio distribution fills 100% of the bar (no empty white gaps)
+            // Color pair: Emerald Sage (#388A6E) to Slate Blue (#4A78A6) blends seamlessly via oceanic teal (#42828C) without muddy brown
+            let barBackground: string;
+            if (accountedCount > 0) {
+              const histRatio = (histCount / accountedCount) * 100;
+              const curRatio = (curCount / accountedCount) * 100;
+
+              if (histCount > 0 && curCount > 0) {
+                const blendSpan = Math.min(10, Math.max(3, histRatio * 0.15, curRatio * 0.15));
+                const blendStart = Math.max(0, histRatio - blendSpan).toFixed(1);
+                const blendEnd = Math.min(100, histRatio + blendSpan).toFixed(1);
+                barBackground = `linear-gradient(to right, #388A6E 0%, #388A6E ${blendStart}%, #4A78A6 ${blendEnd}%, #4A78A6 100%)`;
+              } else if (histCount > 0) {
+                barBackground = '#388A6E';
+              } else {
+                barBackground = '#4A78A6';
+              }
+            } else {
+              barBackground = '#EAE4DC';
             }
 
             return (
@@ -199,9 +247,19 @@ export const StatusView: React.FC<StatusViewProps> = ({
                       <h3 className="font-bold text-sm text-[#2D2824] leading-tight truncate">
                         {inv}
                       </h3>
-                      <p className="text-[11px] text-[#79716B] mt-0.5">
-                        {curCount} fisik / target {tarCount} ({pct.toFixed(0)}%)
-                      </p>
+                      <div className="flex items-center gap-x-2 gap-y-1 text-[11px] text-[#79716B] mt-1 flex-wrap">
+                        <span className="inline-flex items-center gap-1 font-medium text-[#2D2824] whitespace-nowrap">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#388A6E] shrink-0" />
+                          {histCount} diserahkan
+                        </span>
+                        <span className="inline-flex items-center gap-1 font-medium text-[#2D2824] whitespace-nowrap">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#4A78A6] shrink-0" />
+                          {curCount} di meja
+                        </span>
+                        <span className="whitespace-nowrap text-[#79716B]">
+                          • target <strong className="text-[#2D2824]">{dynamicTarget}</strong> ({Math.round(accountedPct)}%)
+                        </span>
+                      </div>
                     </div>
                   </div>
 
@@ -211,18 +269,23 @@ export const StatusView: React.FC<StatusViewProps> = ({
                         +{transitState[inv].length} di Transit
                       </span>
                     )}
+                    {histCount > 0 && (
+                      <span className="px-2 py-0.5 rounded-lg bg-[#EEF6F1] text-[#548A70] text-[11px] font-bold hidden sm:inline-flex items-center gap-1">
+                        <Archive size={12} weight="bold" />
+                        {histCount} Diserahkan
+                      </span>
+                    )}
                     {statusBadge}
                     <CaretRight size={16} className="text-[#A8A29E]" />
                   </div>
                 </div>
 
-                {/* Flat Progress Bar (No Gradient) */}
-                <div className="w-full bg-[#F6F2EB] h-1.5 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full ${barColor} transition-all duration-300`}
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
+                {/* Soft Blend / Cross-fade Stepper Progress Bar */}
+                <div
+                  className="w-full h-2 rounded-full overflow-hidden transition-all duration-300"
+                  style={{ background: barBackground }}
+                  title={`Diserahkan: ${histCount} berkas, Di Meja: ${curCount} berkas / Target ${dynamicTarget}`}
+                />
               </div>
             );
           })}
@@ -234,8 +297,8 @@ export const StatusView: React.FC<StatusViewProps> = ({
         <BottomSheet
           isOpen={!!selectedSurveyorDetail}
           onClose={() => setSelectedSurveyorDetail(null)}
-          title={`Sisa Berkas: ${activeDetailData.inv}`}
-          subtitle={`${activeDetailData.missingRecords.length} berkas belum masuk tumpukan meja (dari total target ${activeDetailData.tarCount})`}
+          title={`Sisa Berkas Belum Masuk Meja: ${activeDetailData.inv}`}
+          subtitle={`${activeDetailData.missingRecords.length} berkas belum di meja maupun diserahkan (dari target ${activeDetailData.dynamicTarget})`}
           footer={
             activeDetailData.missingRecords.length > 0 ? (
               <button
@@ -254,6 +317,16 @@ export const StatusView: React.FC<StatusViewProps> = ({
           }
         >
           <div className="space-y-3">
+            {/* Summary Tag */}
+            <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF8F5] border border-[#EAE4DC] text-xs">
+              <span className="text-[#79716B]">Status Berkas Saat Ini:</span>
+              <div className="flex items-center gap-2 font-bold">
+                <span className="text-[#D97757]">{activeDetailData.curCount} di Meja</span>
+                <span>•</span>
+                <span className="text-[#548A70]">{activeDetailData.historyCount} Sudah Diserahkan</span>
+              </div>
+            </div>
+
             {/* Transit Section if any */}
             {Boolean(transitState[activeDetailData.inv] && transitState[activeDetailData.inv].length > 0) && (
               <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3 space-y-2">
@@ -320,7 +393,7 @@ export const StatusView: React.FC<StatusViewProps> = ({
                 <CheckCircle size={28} className="mx-auto" weight="fill" />
                 <p className="font-bold text-sm">Semua Berkas Sudah Lengkap!</p>
                 <p className="text-xs text-[#79716B]">
-                  Seluruh berkas survei investigator ini sudah tersusun di tumpukan meja.
+                  Seluruh berkas survei investigator ini sudah tersusun di tumpukan meja atau sudah diserahkan.
                 </p>
               </div>
             ) : (

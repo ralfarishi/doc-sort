@@ -8,7 +8,7 @@ import { HandoverView } from './components/HandoverView';
 import { Toast, type ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
 
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem, HandoverState } from './types';
+import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem, HandoverState, HandoverHistoryState } from './types';
 import {
   loadStored,
   saveStored,
@@ -17,12 +17,14 @@ import {
   isMasterState,
   isTransitState,
   isHandoverState,
+  isHandoverHistoryState,
   backfillFolderInfo,
   addToTransit,
   removeFiledFromTransit,
   takeItemsForHandover,
   returnHandoverItemToMaster,
   clearHandoverList,
+  archiveHandoverToHistory,
   simulateHandInsertion,
   getCleanInvestigatorName,
 } from './utils/logic';
@@ -31,8 +33,10 @@ import { useCloudSyncedState } from './hooks/useCloudSyncedState';
 // Import raw JSON data
 import rawData from './data/indexed_visit_data.json';
 import initialTumpukanRaw from './data/tumpukan_master.json';
+import initialHistoryRaw from './data/tumpukan_history.json';
 
 const initialTumpukan = initialTumpukanRaw as unknown as MasterState;
+const initialHistory = initialHistoryRaw as unknown as HandoverHistoryState;
 const excelRecords = (rawData as any).excel as ExcelRecord[];
 const folderRecords = (rawData as any).folders as FolderRecord[];
 
@@ -63,6 +67,15 @@ export function App() {
     fetchRemote: () => fetchServerSnapshot('handover', isHandoverState),
     pushRemote: (state) => pushServerSnapshot('handover', state),
     adoptEmptyRemote: true,
+  });
+
+  // Handover History per Surveyor (persisted locally & synced to Turso)
+  const [historyState, setHistoryState] = useCloudSyncedState<HandoverHistoryState>({
+    load: () => loadStored('history', isHandoverHistoryState, initialHistory),
+    save: (state) => saveStored('history', state),
+    fetchRemote: () => fetchServerSnapshot('history', isHandoverHistoryState),
+    pushRemote: (state) => pushServerSnapshot('history', state),
+    adoptEmptyRemote: false, // first-run seeds the cloud from initialHistory
   });
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
@@ -147,6 +160,21 @@ export function App() {
       setHandoverState((prev) => clearHandoverList(prev, cleanSurv));
     },
     [setHandoverState]
+  );
+
+  const handleArchiveHandover = useCallback(
+    (surveyor: string, notes?: string) => {
+      const cleanSurv = getCleanInvestigatorName(surveyor);
+      const { nextHandover, nextHistory } = archiveHandoverToHistory(
+        handoverState,
+        historyState,
+        cleanSurv,
+        notes
+      );
+      setHandoverState(nextHandover);
+      setHistoryState(nextHistory);
+    },
+    [handoverState, historyState, setHandoverState, setHistoryState]
   );
 
   // Quick insertion of a single document (from Search or Status)
@@ -293,6 +321,7 @@ export function App() {
           <StatusView
             masterState={masterState}
             transitState={transitState}
+            historyState={historyState}
             excelList={excelRecords}
             onSelectSurveyor={setActiveSurveyor}
             onNavigateToInsert={handleNavigateToInsertWithDebtors}
@@ -314,11 +343,13 @@ export function App() {
         {activeTab === 'handover' && (
           <HandoverView
             handoverState={handoverState}
+            historyState={historyState}
             masterState={masterState}
             activeSurveyor={activeSurveyor}
             onTakeItems={handleTakeItemsForHandover}
             onReturnItem={handleReturnHandoverItem}
             onClearHandover={handleClearHandover}
+            onArchiveHandover={handleArchiveHandover}
             onShowToast={showToast}
           />
         )}

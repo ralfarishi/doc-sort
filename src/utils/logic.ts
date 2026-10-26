@@ -1,4 +1,4 @@
-import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState, HandoverItem, HandoverState } from '../types';
+import type { ExcelRecord, FolderRecord, MasterItem, MatchResult, MatchCandidate, InsertionStep, MasterState, SearchPhysicalResult, TransitItem, TransitState, HandoverItem, HandoverState, HandoverHistoryItem, HandoverHistoryState } from '../types';
 import { nameSimilarity, normalizeName, stringSimilarity } from './matching.ts';
 
 export { nameSimilarity, normalizeName, stringSimilarity };
@@ -139,7 +139,7 @@ export function matchQuery(
   if (isUnassigned) {
     warningMessage = 'Nasabah ini tercatat "Belum Ditugaskan" di Master Excel.';
   } else if (surveyorMismatch) {
-    warningMessage = `Tercatat untuk surveyor ${bestMatch.surveyor}, bukan ${targetSurveyor}.`;
+    warningMessage = `Tercatat untuk investigator ${bestMatch.surveyor}, bukan ${targetSurveyor}.`;
   } else if (hasAmbiguity) {
     warningMessage = `Ditemukan ${highScorers.length} nasabah dengan nama identik/serupa.`;
   }
@@ -330,16 +330,29 @@ export function isHandoverState(value: unknown): value is HandoverState {
   );
 }
 
+/** Runtime check that an unknown value is a well-formed HandoverHistoryState (surveyor -> HandoverHistoryItem[]). */
+export function isHandoverHistoryState(value: unknown): value is HandoverHistoryState {
+  return isSnapshotOf(
+    value,
+    (it) =>
+      typeof it.id === 'string' &&
+      typeof it.debitur === 'string' &&
+      typeof it.surveyor === 'string' &&
+      typeof it.handedOverAt === 'string'
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Persistence: localStorage + cloud (Turso via /api/state?scope=...)
 // ---------------------------------------------------------------------------
 
-export type SyncScope = 'master' | 'transit' | 'handover';
+export type SyncScope = 'master' | 'transit' | 'handover' | 'history';
 
 const STORAGE_KEYS: Record<SyncScope, string> = {
   master: 'ORGANIZER_FISIK_MASTER_STATE_V3',
   transit: 'ORGANIZER_FISIK_TRANSIT_STATE_V1',
   handover: 'ORGANIZER_FISIK_HANDOVER_STATE_V1',
+  history: 'ORGANIZER_FISIK_HISTORY_STATE_V1',
 };
 
 const apiUrl = (scope: SyncScope) => `/api/state?scope=${scope}`;
@@ -607,6 +620,50 @@ export function clearHandoverList(
   const next = { ...handover };
   delete next[surveyor];
   return next;
+}
+
+/**
+ * Finalizes handover items by moving them from active handover tray into persistent history.
+ */
+export function archiveHandoverToHistory(
+  handover: HandoverState,
+  history: HandoverHistoryState,
+  surveyor: string,
+  notes?: string
+): { nextHandover: HandoverState; nextHistory: HandoverHistoryState; archivedCount: number } {
+  const items = handover[surveyor] ?? [];
+  if (items.length === 0) {
+    return { nextHandover: handover, nextHistory: history, archivedCount: 0 };
+  }
+
+  const timestamp = new Date().toISOString();
+  const newHistoryEntries: HandoverHistoryItem[] = items.map((it) => ({
+    id: it.id || createId(),
+    debitur: it.debitur,
+    no: it.no,
+    id_klaim: it.id_klaim,
+    kota: it.kota,
+    wilayah: it.wilayah,
+    jenis_case: it.jenis_case,
+    surveyor: it.surveyor,
+    handedOverAt: timestamp,
+    notes: notes || 'Diserahkan via web',
+  }));
+
+  const existingHistory = history[surveyor] ?? [];
+  const mergedHistory = [...existingHistory, ...newHistoryEntries].sort((a, b) =>
+    normalize(a.debitur).localeCompare(normalize(b.debitur))
+  );
+
+  const nextHandover = { ...handover };
+  delete nextHandover[surveyor];
+
+  const nextHistory: HandoverHistoryState = {
+    ...history,
+    [surveyor]: mergedHistory,
+  };
+
+  return { nextHandover, nextHistory, archivedCount: newHistoryEntries.length };
 }
 
 

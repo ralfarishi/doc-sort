@@ -107,3 +107,18 @@ export interface HandoverItem {
 
 export type HandoverState = Record<string, HandoverItem[]>;
 
+export interface HandoverHistoryItem {
+  id: string;
+  debitur: string;
+  no: number | string;
+  id_klaim: number | string;
+  kota: string;
+  wilayah: string;
+  jenis_case: string;
+  surveyor: string;
+  handedOverAt: string;
+  notes?: string;
+}
+
+export type HandoverHistoryState = Record<string, HandoverHistoryItem[]>;
+

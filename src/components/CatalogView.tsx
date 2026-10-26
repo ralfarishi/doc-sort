@@ -133,10 +133,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <h2 className="text-sm sm:text-base font-bold text-[#2D2824] leading-tight truncate">
               Katalog Fisik (A–Z)
             </h2>
-            <div className="flex items-center gap-1.5 text-xs text-[#79716B] mt-0.5">
-              <span>ORDNER {activeSurveyor}</span>
-              <span>•</span>
-              <span className="font-semibold text-[#548A70]">{currentItems.length} Berkas</span>
+            <div className="flex items-center gap-1.5 text-xs text-[#79716B] mt-0.5 min-w-0">
+              <span className="truncate max-w-[130px] xs:max-w-[200px] sm:max-w-none">
+                ORDNER {activeSurveyor}
+              </span>
+              <span className="shrink-0 text-[#DCD3C7]">•</span>
+              <span className="font-semibold text-[#548A70] whitespace-nowrap shrink-0">
+                {currentItems.length} Berkas
+              </span>
             </div>
           </div>
 
@@ -145,11 +149,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             {onTakeForHandover && currentItems.length > 0 && !isSelectMode && (
               <button
                 onClick={() => setIsSelectMode(true)}
-                className="px-2.5 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-xs font-semibold text-[#2D2824] flex items-center gap-1.5 transition-colors shrink-0"
+                className="px-2 sm:px-2.5 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-xs font-semibold text-[#2D2824] flex items-center gap-1 sm:gap-1.5 transition-colors shrink-0"
                 title="Pilih beberapa berkas untuk diserahkan"
               >
                 <ArrowSquareOut size={15} />
-                <span>Ambil Berkas</span>
+                <span className="hidden sm:inline">Ambil Berkas</span>
+                <span className="sm:hidden text-[11px]">Ambil</span>
               </button>
             )}
 

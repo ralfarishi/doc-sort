@@ -151,7 +151,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
       if (isUnassigned) {
         warningMessage = 'Nasabah ini tercatat "Belum Ditugaskan" di Master Excel.';
       } else if (surveyorMismatch) {
-        warningMessage = `Tercatat untuk surveyor ${candidate.excel.surveyor}, bukan ${selectedSurveyor}.`;
+        warningMessage = `Tercatat untuk investigator ${candidate.excel.surveyor}, bukan ${selectedSurveyor}.`;
       }
 
       updated[resultIndex] = {
@@ -785,7 +785,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                                   {cand.excel.debitur} (Case {cand.excel.jenis_case} #{cand.excel.no} - {cand.excel.kota})
                                 </span>
                                 <div className="flex items-center gap-1.5 flex-wrap text-[10px] mt-0.5">
-                                  <span className="text-[#79716B]">Surveyor:</span>
+                                  <span className="text-[#79716B]">Investigator:</span>
                                   <span className="font-semibold text-[#2D2824]">{cand.excel.surveyor || 'Belum Ditugaskan'}</span>
                                   {cand.isExactSurveyor ? (
                                     <span className="bg-[#EEF6F1] text-[#548A70] font-bold px-1.5 py-0.5 rounded text-[9.5px]">
@@ -1016,7 +1016,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
       <ConfirmModal
         isOpen={isProblemConfirmModalOpen}
         title="Konfirmasi Penugasan Berkas"
-        message={`Ditemukan ${pendingWarnings.length} berkas yang berstatus "Belum Ditugaskan" atau berbeda surveyor di Excel. Apakah Anda yakin ingin menetapkan seluruh berkas ini menjadi milik Ordner ${selectedSurveyor} dan melanjutkan penataan fisik meja?`}
+        message={`Ditemukan ${pendingWarnings.length} berkas yang berstatus "Belum Ditugaskan" atau berbeda investigator di Excel. Apakah Anda yakin ingin menetapkan seluruh berkas ini menjadi milik Ordner ${selectedSurveyor} dan melanjutkan penataan fisik meja?`}
         confirmLabel={`Ya, Tetapkan Semua ke Ordner ${selectedSurveyor}`}
         cancelLabel="Periksa Dulu"
         isDestructive={false}

@@ -38,6 +38,15 @@ const SCOPES = {
       typeof it.debitur === 'string' &&
       typeof it.surveyor === 'string',
   },
+  history: {
+    table: 'physical_handover_history',
+    maxItems: 3000,
+    allowEmpty: true,
+    isItem: (it: Record<string, unknown>) =>
+      typeof it.id === 'string' &&
+      typeof it.debitur === 'string' &&
+      typeof it.surveyor === 'string',
+  },
 } as const;
 
 type Scope = keyof typeof SCOPES;
