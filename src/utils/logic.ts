@@ -278,6 +278,39 @@ export function searchPhysicalLocation(query: string, masterState: MasterState):
   return results.sort((a, b) => b.sim - a.sim);
 }
 
+export interface FullBackupPayload {
+  version: number;
+  timestamp: string;
+  master: MasterState;
+  history?: HandoverHistoryState;
+  transit?: TransitState;
+  handover?: HandoverState;
+}
+
+export function exportFullBackupToJson(
+  master: MasterState,
+  history?: HandoverHistoryState,
+  transit?: TransitState,
+  handover?: HandoverState
+): void {
+  const payload: FullBackupPayload = {
+    version: 2,
+    timestamp: new Date().toISOString(),
+    master,
+    history,
+    transit,
+    handover,
+  };
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2));
+  const downloadAnchor = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  downloadAnchor.setAttribute('href', dataStr);
+  downloadAnchor.setAttribute('download', `organizer_backup_full_${date}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
 export function exportStateToJson(state: MasterState): void {
   const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(state, null, 2));
   const downloadAnchor = document.createElement('a');

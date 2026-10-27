@@ -7,7 +7,6 @@ import {
   MagnifyingGlass,
   PlusCircle,
   CaretRight,
-  Archive,
 } from '@phosphor-icons/react';
 import type { ExcelRecord, MasterState, TransitState, HandoverHistoryState } from '../types';
 import { getCleanInvestigatorName, normalize } from '../utils/logic';
@@ -182,7 +181,9 @@ export const StatusView: React.FC<StatusViewProps> = ({
             const accountedCount = curCount + histCount;
             const tarCount = targetData.visited > 0 ? targetData.visited : targetData.total;
             const dynamicTarget = Math.max(tarCount, accountedCount);
-            const accountedPct = dynamicTarget > 0 ? Math.min(100, (accountedCount / dynamicTarget) * 100) : 0;
+            const diserahkanPct = dynamicTarget > 0 ? Math.min(100, (histCount / dynamicTarget) * 100) : 0;
+            const diMejaPct = dynamicTarget > 0 ? Math.min(100 - diserahkanPct, (curCount / dynamicTarget) * 100) : 0;
+            const sisaTarget = Math.max(0, dynamicTarget - accountedCount);
 
             let statusBadge = (
               <span className="px-2 py-0.5 rounded-lg bg-[#F6F2EB] text-[#79716B] text-[11px] font-bold">
@@ -190,11 +191,18 @@ export const StatusView: React.FC<StatusViewProps> = ({
               </span>
             );
 
-            if (accountedCount >= dynamicTarget && dynamicTarget > 0) {
+            if (histCount >= dynamicTarget && dynamicTarget > 0) {
               statusBadge = (
                 <span className="px-2 py-0.5 rounded-lg bg-[#EEF6F1] text-[#388A6E] text-[11px] font-bold flex items-center gap-1">
                   <CheckCircle size={13} weight="bold" />
-                  LENGKAP
+                  SELESAI
+                </span>
+              );
+            } else if (accountedCount >= dynamicTarget && dynamicTarget > 0) {
+              statusBadge = (
+                <span className="px-2 py-0.5 rounded-lg bg-[#EEF3FA] text-[#4A78A6] text-[11px] font-bold flex items-center gap-1">
+                  <CheckCircle size={13} weight="bold" />
+                  FISIK LENGKAP
                 </span>
               );
             } else if (accountedCount > 0) {
@@ -204,27 +212,6 @@ export const StatusView: React.FC<StatusViewProps> = ({
                   PROGRES
                 </span>
               );
-            }
-
-            // Ratio distribution fills 100% of the bar (no empty white gaps)
-            // Color pair: Emerald Sage (#388A6E) to Slate Blue (#4A78A6) blends seamlessly via oceanic teal (#42828C) without muddy brown
-            let barBackground: string;
-            if (accountedCount > 0) {
-              const histRatio = (histCount / accountedCount) * 100;
-              const curRatio = (curCount / accountedCount) * 100;
-
-              if (histCount > 0 && curCount > 0) {
-                const blendSpan = Math.min(10, Math.max(3, histRatio * 0.15, curRatio * 0.15));
-                const blendStart = Math.max(0, histRatio - blendSpan).toFixed(1);
-                const blendEnd = Math.min(100, histRatio + blendSpan).toFixed(1);
-                barBackground = `linear-gradient(to right, #388A6E 0%, #388A6E ${blendStart}%, #4A78A6 ${blendEnd}%, #4A78A6 100%)`;
-              } else if (histCount > 0) {
-                barBackground = '#388A6E';
-              } else {
-                barBackground = '#4A78A6';
-              }
-            } else {
-              barBackground = '#EAE4DC';
             }
 
             return (
@@ -247,45 +234,73 @@ export const StatusView: React.FC<StatusViewProps> = ({
                       <h3 className="font-bold text-sm text-[#2D2824] leading-tight truncate">
                         {inv}
                       </h3>
-                      <div className="flex items-center gap-x-2 gap-y-1 text-[11px] text-[#79716B] mt-1 flex-wrap">
-                        <span className="inline-flex items-center gap-1 font-medium text-[#2D2824] whitespace-nowrap">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#388A6E] shrink-0" />
-                          {histCount} diserahkan
-                        </span>
-                        <span className="inline-flex items-center gap-1 font-medium text-[#2D2824] whitespace-nowrap">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#4A78A6] shrink-0" />
-                          {curCount} di meja
-                        </span>
-                        <span className="whitespace-nowrap text-[#79716B]">
-                          • target <strong className="text-[#2D2824]">{dynamicTarget}</strong> ({Math.round(accountedPct)}%)
-                        </span>
-                      </div>
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
                     {Boolean(transitState[inv] && transitState[inv].length > 0) && (
                       <span className="px-2 py-0.5 rounded-lg bg-[#EEF3FA] text-[#5D7CB0] text-[11px] font-bold">
                         +{transitState[inv].length} di Transit
                       </span>
                     )}
-                    {histCount > 0 && (
-                      <span className="px-2 py-0.5 rounded-lg bg-[#EEF6F1] text-[#548A70] text-[11px] font-bold hidden sm:inline-flex items-center gap-1">
-                        <Archive size={12} weight="bold" />
-                        {histCount} Diserahkan
-                      </span>
-                    )}
                     {statusBadge}
-                    <CaretRight size={16} className="text-[#A8A29E]" />
+                    <CaretRight size={16} className="text-[#A8A29E] shrink-0" />
                   </div>
                 </div>
 
-                {/* Soft Blend / Cross-fade Stepper Progress Bar */}
-                <div
-                  className="w-full h-2 rounded-full overflow-hidden transition-all duration-300"
-                  style={{ background: barBackground }}
-                  title={`Diserahkan: ${histCount} berkas, Di Meja: ${curCount} berkas / Target ${dynamicTarget}`}
-                />
+                {/* Pill Capsule Progress Bar with Attached Label / Pill Tag */}
+                <div className="space-y-1.5 pt-0.5">
+                  <div className="relative w-full h-5 bg-[#F4EFEA] border border-[#EAE4DC] rounded-full overflow-hidden p-0.5 flex items-center">
+                    {/* Diserahkan Bar Segment */}
+                    {diserahkanPct > 0 && (
+                      <div
+                        className="h-full bg-[#388A6E] rounded-full transition-all duration-300 relative flex items-center justify-end px-1.5"
+                        style={{ width: `${diserahkanPct}%` }}
+                      >
+                        {diserahkanPct >= 20 && (
+                          <span className="text-[10px] font-bold text-white leading-none whitespace-nowrap drop-shadow-xs">
+                            {histCount} diserahkan
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Di Meja Bar Segment (berdampingan) */}
+                    {diMejaPct > 0 && (
+                      <div
+                        className="h-full bg-[#4A78A6] rounded-full transition-all duration-300 ml-0.5 relative flex items-center justify-end px-1.5"
+                        style={{ width: `${diMejaPct}%` }}
+                      >
+                        {diMejaPct >= 20 && (
+                          <span className="text-[10px] font-bold text-white leading-none whitespace-nowrap drop-shadow-xs">
+                            {curCount} di meja
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Badge Pill Menempel jika segmen bar terlalu kecil untuk teks */}
+                    {diserahkanPct < 20 && histCount > 0 && (
+                      <span className="ml-2 text-[10px] font-bold text-[#388A6E] whitespace-nowrap">
+                        {Math.round(diserahkanPct)}% diserahkan
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Summary Bar Footer Info */}
+                  <div className="flex items-center justify-between text-[10px] text-[#79716B] px-1">
+                    <span>
+                      Diserahkan: <strong className="text-[#388A6E] font-bold">{histCount}</strong> / {dynamicTarget} berkas
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      {sisaTarget > 0 ? (
+                        <span className="text-[#C48A3F] font-semibold">Sisa {sisaTarget} belum ditemukan</span>
+                      ) : (
+                        <span className="text-[#388A6E] font-bold">100% berkas fisik ada</span>
+                      )}
+                    </span>
+                  </div>
+                </div>
               </div>
             );
           })}

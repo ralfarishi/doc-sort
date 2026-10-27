@@ -332,8 +332,14 @@ export function App() {
         {activeTab === 'catalog' && (
           <CatalogView
             masterState={masterState}
+            historyState={historyState}
+            transitState={transitState}
+            handoverState={handoverState}
             activeSurveyor={activeSurveyor}
             onImportState={handleImportState}
+            onImportHistoryState={setHistoryState}
+            onImportTransitState={setTransitState}
+            onImportHandoverState={setHandoverState}
             onRequestReset={() => setIsResetModalOpen(true)}
             onShowToast={showToast}
             onTakeForHandover={handleTakeItemsForHandover}

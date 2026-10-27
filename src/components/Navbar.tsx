@@ -37,20 +37,20 @@ export const Navbar: React.FC<NavbarProps> = ({
   const [isOrdnerSheetOpen, setIsOrdnerSheetOpen] = useState(false);
 
   const tabs = [
-    { id: 'search' as ActiveTab, label: 'Cari Berkas', icon: MagnifyingGlass },
-    { id: 'insert' as ActiveTab, label: 'Sisip & Susun', icon: Tray, badge: totalTransitDocs },
-    { id: 'status' as ActiveTab, label: 'Status Ordner', icon: ChartBar },
-    { id: 'catalog' as ActiveTab, label: 'Katalog A-Z', icon: ListDashes },
-    { id: 'handover' as ActiveTab, label: 'Berkas Diambil', icon: Printer, badge: totalHandoverDocs },
+    { id: 'search' as ActiveTab, label: 'Cari Berkas', shortLabel: 'Cari', icon: MagnifyingGlass },
+    { id: 'insert' as ActiveTab, label: 'Sisip & Susun', shortLabel: 'Sisip', icon: Tray, badge: totalTransitDocs },
+    { id: 'status' as ActiveTab, label: 'Status Ordner', shortLabel: 'Status', icon: ChartBar },
+    { id: 'catalog' as ActiveTab, label: 'Katalog A-Z', shortLabel: 'Katalog', icon: ListDashes },
+    { id: 'handover' as ActiveTab, label: 'Berkas Diambil', shortLabel: 'Diambil', icon: Printer, badge: totalHandoverDocs },
   ];
 
   return (
     <>
       {/* Top Header */}
-      <header className="print:hidden sticky top-0 z-40 bg-[#FFFFFF] border-b border-[#EAE4DC] px-4 py-2.5 sm:px-6">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+      <header className="print:hidden sticky top-0 z-40 bg-[#FFFFFF] border-b border-[#EAE4DC] px-3.5 py-2 sm:px-6 sm:py-2.5">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-2.5 sm:gap-3">
           {/* Logo & Subtitle */}
-          <div className="flex items-center gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#FDF1ED] border border-[#F7D0C4] flex items-center justify-center text-[#D97757] shrink-0">
               <FolderSimple size={18} weight="fill" />
             </div>
@@ -59,7 +59,8 @@ export const Navbar: React.FC<NavbarProps> = ({
                 Organizer Fisik
               </h1>
               <p className="text-[10px] sm:text-[11px] text-[#79716B] leading-none mt-0.5 truncate">
-                {totalPhysicalDocs} Dokumen Terdata
+                <span className="hidden sm:inline">{totalPhysicalDocs} Dokumen Terdata</span>
+                <span className="sm:hidden">{totalPhysicalDocs} Dokumen</span>
               </p>
             </div>
           </div>
@@ -94,21 +95,21 @@ export const Navbar: React.FC<NavbarProps> = ({
           {/* Ordner Selector Button (Thumb-Friendly Touch Target) */}
           <button
             onClick={() => setIsOrdnerSheetOpen(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] border border-[#EAE4DC] text-xs font-semibold text-[#2D2824] transition-colors shrink-0"
+            className="min-h-[36px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] border border-[#EAE4DC] text-xs font-semibold text-[#2D2824] transition-colors shrink-0"
             title="Pilih Ordner Aktif"
           >
-            <FolderSimple size={14} className="text-[#D97757]" weight="fill" />
-            <span className="max-w-[110px] sm:max-w-[160px] truncate text-left">
+            <FolderSimple size={14} className="text-[#D97757] shrink-0" weight="fill" />
+            <span className="max-w-[105px] xs:max-w-[145px] sm:max-w-[180px] truncate text-left">
               {activeSurveyor}
             </span>
-            <CaretDown size={13} className="text-[#79716B]" weight="bold" />
+            <CaretDown size={13} className="text-[#79716B] shrink-0" weight="bold" />
           </button>
         </div>
       </header>
 
-      {/* Mobile Bottom Navigation Bar */}
-      <nav className="print:hidden md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-1 py-1 pb-[max(0.4rem,env(safe-area-inset-bottom))]">
-        <div className="grid grid-cols-5 gap-0.5">
+      {/* Mobile Bottom Navigation Bar (Modern 2026 Thumb Ergonomics) */}
+      <nav className="print:hidden md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-2 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-lg">
+        <div className="grid grid-cols-5 gap-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             const isActive = activeTab === tab.id;
@@ -116,21 +117,23 @@ export const Navbar: React.FC<NavbarProps> = ({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`flex flex-col items-center justify-center py-1.5 rounded-xl transition-all relative ${
+                className={`min-h-[50px] flex flex-col items-center justify-center py-1 px-0.5 rounded-xl transition-all relative border ${
                   isActive
-                    ? 'text-[#D97757] bg-[#FDF1ED]'
-                    : 'text-[#79716B] hover:text-[#2D2824]'
+                    ? 'text-[#D97757] bg-[#FDF1ED] border-[#F7D0C4] shadow-xs'
+                    : 'text-[#79716B] hover:text-[#2D2824] border-transparent'
                 }`}
               >
                 <div className="relative">
                   <Icon size={20} weight={isActive ? 'bold' : 'regular'} />
                   {Boolean(tab.badge && tab.badge > 0) && (
-                    <span className="absolute -top-1 -right-2 min-w-[14px] h-[14px] rounded-full bg-[#5D7CB0] text-white text-[9px] font-bold flex items-center justify-center px-0.5">
+                    <span className="absolute -top-1 -right-2.5 min-w-[15px] h-[15px] rounded-full bg-[#5D7CB0] text-white text-[9px] font-bold flex items-center justify-center px-0.5 shadow-xs">
                       {tab.badge}
                     </span>
                   )}
                 </div>
-                <span className="text-[10px] font-semibold mt-0.5">{tab.label}</span>
+                <span className="text-[10px] font-semibold mt-0.5 tracking-tight truncate max-w-full">
+                  {tab.shortLabel}
+                </span>
               </button>
             );
           })}

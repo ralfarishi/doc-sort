@@ -11,14 +11,20 @@ import {
   CheckSquare,
   Square,
 } from '@phosphor-icons/react';
-import type { MasterState } from '../types';
-import { exportStateToJson, isMasterState } from '../utils/logic';
+import type { MasterState, HandoverHistoryState, TransitState, HandoverState } from '../types';
+import { exportFullBackupToJson, isMasterState, isHandoverHistoryState, isTransitState, isHandoverState } from '../utils/logic';
 import { BottomSheet } from './BottomSheet';
 
 interface CatalogViewProps {
   masterState: MasterState;
+  historyState?: HandoverHistoryState;
+  transitState?: TransitState;
+  handoverState?: HandoverState;
   activeSurveyor: string;
   onImportState: (newState: MasterState) => void;
+  onImportHistoryState?: (newHistory: HandoverHistoryState) => void;
+  onImportTransitState?: (newTransit: TransitState) => void;
+  onImportHandoverState?: (newHandover: HandoverState) => void;
   onRequestReset: () => void;
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
   onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
@@ -26,8 +32,14 @@ interface CatalogViewProps {
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
   masterState,
+  historyState,
+  transitState,
+  handoverState,
   activeSurveyor,
   onImportState,
+  onImportHistoryState,
+  onImportTransitState,
+  onImportHandoverState,
   onRequestReset,
   onShowToast,
   onTakeForHandover,
@@ -78,7 +90,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     });
   }, [currentItems, searchFilter, caseFilter, wilayahFilter]);
 
-  // Handle JSON Import
+  // Handle JSON Import (supports both Legacy Master-only and Full Backup Bundle)
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -86,13 +98,34 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed: unknown = JSON.parse(event.target?.result as string);
+        const parsed: any = JSON.parse(event.target?.result as string);
+        
+        // Format A: Full Backup Bundle { version, master, history, transit, handover }
+        if (parsed && typeof parsed === 'object' && parsed.master && isMasterState(parsed.master)) {
+          onImportState(parsed.master);
+          let extraMsg = 'Data tumpukan meja diperbarui.';
+          if (parsed.history && isHandoverHistoryState(parsed.history) && onImportHistoryState) {
+            onImportHistoryState(parsed.history);
+            extraMsg = 'Data meja & riwayat diserahkan diperbarui.';
+          }
+          if (parsed.transit && isTransitState(parsed.transit) && onImportTransitState) {
+            onImportTransitState(parsed.transit);
+          }
+          if (parsed.handover && isHandoverState(parsed.handover) && onImportHandoverState) {
+            onImportHandoverState(parsed.handover);
+          }
+          setIsActionSheetOpen(false);
+          onShowToast('success', 'Full Backup Berhasil Dipulihkan', extraMsg);
+          return;
+        }
+
+        // Format B: Legacy Master-only { [surveyor]: MasterItem[] }
         if (isMasterState(parsed) && Object.keys(parsed).length > 0) {
           onImportState(parsed);
           setIsActionSheetOpen(false);
           onShowToast('success', 'Impor Berhasil', 'Data tumpukan master diperbarui dari file JSON.');
         } else {
-          onShowToast('error', 'Format Tidak Sesuai', 'File JSON bukan data tumpukan yang valid.');
+          onShowToast('error', 'Format Tidak Sesuai', 'File JSON bukan backup data yang valid.');
         }
       } catch {
         onShowToast('error', 'Gagal Membaca File', 'Terjadi kesalahan saat parsing JSON.');
@@ -411,10 +444,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         subtitle={`Manajemen data tumpukan fisik untuk ORDNER ${activeSurveyor}`}
       >
         <div className="space-y-2">
-          {/* Export JSON */}
+          {/* Export JSON (Full Backup) */}
           <button
             onClick={() => {
-              exportStateToJson(masterState);
+              exportFullBackupToJson(masterState, historyState, transitState, handoverState);
               setIsActionSheetOpen(false);
             }}
             className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#FAF8F5] hover:bg-[#F6F2EB] border border-[#EAE4DC] flex items-center gap-3 text-left transition-colors"
@@ -424,10 +457,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </div>
             <div>
               <span className="font-bold text-sm text-[#2D2824] block leading-tight">
-                Ekspor Backup JSON
+                Ekspor Backup JSON Lengkap
               </span>
               <span className="text-xs text-[#79716B]">
-                Simpan file backup data ke HP/Laptop Anda
+                Simpan backup lengkap (Meja, Diserahkan, Transit) ke HP/Laptop
               </span>
             </div>
           </button>

@@ -218,10 +218,11 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
                 setSelectedPickerKeys(new Set());
                 setIsPickerOpen(true);
               }}
-              className="px-3.5 py-2 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] font-semibold text-xs flex items-center gap-1.5 transition-colors"
+              className="min-h-[38px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] font-semibold text-xs flex items-center gap-1.5 transition-colors"
             >
               <Plus size={16} weight="bold" />
-              <span>Ambil dari Tumpukan</span>
+              <span className="hidden sm:inline">Ambil dari Tumpukan</span>
+              <span className="sm:hidden">Ambil</span>
             </button>
 
             {activeSubTab === 'pending' && (
@@ -229,7 +230,7 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
                 <button
                   onClick={handlePrint}
                   disabled={totalHandoverCount === 0}
-                  className={`px-4 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition-all ${
+                  className={`min-h-[38px] px-3.5 sm:px-4 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 sm:gap-2 transition-all ${
                     totalHandoverCount > 0
                       ? 'bg-[#D97757] hover:bg-[#C26344] text-white shadow-xs'
                       : 'bg-[#EAE4DC] text-[#79716B] cursor-not-allowed'
@@ -242,18 +243,19 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
                 {totalHandoverCount > 0 && (
                   <button
                     onClick={() => setIsArchiveModalOpen(true)}
-                    className="px-3.5 py-2 rounded-xl bg-[#EEF6F1] hover:bg-[#D5EBDD] text-[#548A70] font-bold text-xs flex items-center gap-1.5 transition-colors border border-[#C8E2D4]"
+                    className="min-h-[38px] px-3 sm:px-3.5 py-1.5 rounded-xl bg-[#EEF6F1] hover:bg-[#D5EBDD] text-[#548A70] font-bold text-xs flex items-center gap-1.5 transition-colors border border-[#C8E2D4]"
                     title="Tandai selesai diserahkan dan simpan ke riwayat arsip"
                   >
                     <CheckCircle size={16} weight="bold" />
-                    <span>Selesai & Arsipkan</span>
+                    <span className="hidden sm:inline">Selesai & Arsipkan</span>
+                    <span className="sm:hidden">Arsipkan</span>
                   </button>
                 )}
 
                 {totalHandoverCount > 0 && (
                   <button
                     onClick={() => setIsClearModalOpen(true)}
-                    className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#FBEBEB] text-[#79716B] hover:text-[#C84C4C] transition-colors"
+                    className="w-[38px] h-[38px] rounded-xl bg-[#F6F2EB] hover:bg-[#FBEBEB] text-[#79716B] hover:text-[#C84C4C] flex items-center justify-center transition-colors shrink-0"
                     title="Kosongkan Antrean"
                   >
                     <Trash size={16} />
@@ -264,34 +266,38 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
           </div>
         </div>
 
-        {/* Sub-Tab Navigation: Antrean Pengambilan vs Riwayat Arsip */}
-        <div className="flex items-center gap-2 border-b border-[#EAE4DC] pt-1 overflow-x-auto no-scrollbar">
+        {/* Sub-Tab Navigation: Segmented Control Capsule (Thumb-friendly 50/50 on Mobile) */}
+        <div className="bg-[#F6F2EB] p-1 rounded-2xl border border-[#EAE4DC] flex items-center gap-1">
           <button
             onClick={() => setActiveSubTab('pending')}
-            className={`flex items-center gap-2 pb-2.5 px-3 text-xs font-bold border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`flex-1 min-h-[38px] flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
               activeSubTab === 'pending'
-                ? 'border-[#D97757] text-[#D97757]'
-                : 'border-transparent text-[#79716B] hover:text-[#2D2824]'
+                ? 'bg-[#FFFFFF] text-[#D97757] shadow-xs border border-[#EAE4DC]'
+                : 'text-[#79716B] hover:text-[#2D2824] border border-transparent'
             }`}
           >
-            <ListDashes size={16} weight="bold" className="shrink-0" />
-            <span>Antrean Siap Cetak</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#F6F2EB] text-[#2D2824] shrink-0">
+            <ListDashes size={16} weight={activeSubTab === 'pending' ? 'bold' : 'regular'} className="shrink-0" />
+            <span className="truncate">Antrean Cetak</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
+              activeSubTab === 'pending' ? 'bg-[#FDF1ED] text-[#D97757]' : 'bg-[#EAE4DC] text-[#79716B]'
+            }`}>
               {totalHandoverCount}
             </span>
           </button>
 
           <button
             onClick={() => setActiveSubTab('history')}
-            className={`flex items-center gap-2 pb-2.5 px-3 text-xs font-bold border-b-2 transition-colors whitespace-nowrap shrink-0 ${
+            className={`flex-1 min-h-[38px] flex items-center justify-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
               activeSubTab === 'history'
-                ? 'border-[#548A70] text-[#548A70]'
-                : 'border-transparent text-[#79716B] hover:text-[#2D2824]'
+                ? 'bg-[#FFFFFF] text-[#548A70] shadow-xs border border-[#EAE4DC]'
+                : 'text-[#79716B] hover:text-[#2D2824] border border-transparent'
             }`}
           >
-            <ClockCounterClockwise size={16} weight="bold" className="shrink-0" />
-            <span>Riwayat Sudah Diserahkan</span>
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#EEF6F1] text-[#548A70] shrink-0">
+            <ClockCounterClockwise size={16} weight={activeSubTab === 'history' ? 'bold' : 'regular'} className="shrink-0" />
+            <span className="truncate">Riwayat Diserahkan</span>
+            <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
+              activeSubTab === 'history' ? 'bg-[#EEF6F1] text-[#548A70]' : 'bg-[#EAE4DC] text-[#79716B]'
+            }`}>
               {totalHistoryCount}
             </span>
           </button>
