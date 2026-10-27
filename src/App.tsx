@@ -25,6 +25,8 @@ import {
   returnHandoverItemToMaster,
   clearHandoverList,
   archiveHandoverToHistory,
+  restoreHistoryItemToHandover,
+  restoreAllHistoryToHandover,
   simulateHandInsertion,
   getCleanInvestigatorName,
 } from './utils/logic';
@@ -175,6 +177,47 @@ export function App() {
       setHistoryState(nextHistory);
     },
     [handoverState, historyState, setHandoverState, setHistoryState]
+  );
+
+  const handleRestoreHistoryItem = useCallback(
+    (surveyor: string, historyId: string) => {
+      const cleanSurv = getCleanInvestigatorName(surveyor);
+      const { nextHistory, nextHandover, restoredItem } = restoreHistoryItemToHandover(
+        historyState,
+        handoverState,
+        cleanSurv,
+        historyId
+      );
+      setHistoryState(nextHistory);
+      setHandoverState(nextHandover);
+      if (restoredItem) {
+        showToast(
+          'success',
+          'Ditarik ke Antrean Cetak',
+          `${restoredItem.debitur} dikembalikan ke Antrean Cetak.`
+        );
+      }
+    },
+    [historyState, handoverState, setHistoryState, setHandoverState, showToast]
+  );
+
+  const handleRestoreAllHistory = useCallback(
+    (surveyor: string) => {
+      const cleanSurv = getCleanInvestigatorName(surveyor);
+      const { nextHistory, nextHandover, restoredCount } = restoreAllHistoryToHandover(
+        historyState,
+        handoverState,
+        cleanSurv
+      );
+      setHistoryState(nextHistory);
+      setHandoverState(nextHandover);
+      showToast(
+        'success',
+        'Batch Dikembalikan ke Antrean',
+        `${restoredCount} berkas ${cleanSurv} ditarik kembali ke Antrean Cetak.`
+      );
+    },
+    [historyState, handoverState, setHistoryState, setHandoverState, showToast]
   );
 
   // Quick insertion of a single document (from Search or Status)
@@ -356,6 +399,8 @@ export function App() {
             onReturnItem={handleReturnHandoverItem}
             onClearHandover={handleClearHandover}
             onArchiveHandover={handleArchiveHandover}
+            onRestoreHistoryItem={handleRestoreHistoryItem}
+            onRestoreAllHistory={handleRestoreAllHistory}
             onShowToast={showToast}
           />
         )}

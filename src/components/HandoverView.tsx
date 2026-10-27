@@ -26,6 +26,8 @@ interface HandoverViewProps {
   onReturnItem: (surveyor: string, handoverId: string) => void;
   onClearHandover: (surveyor?: string) => void;
   onArchiveHandover: (surveyor: string, notes?: string) => void;
+  onRestoreHistoryItem?: (surveyor: string, historyId: string) => void;
+  onRestoreAllHistory?: (surveyor: string) => void;
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
 }
 
@@ -44,6 +46,8 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
   onReturnItem,
   onClearHandover,
   onArchiveHandover,
+  onRestoreHistoryItem,
+  onRestoreAllHistory,
   onShowToast,
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<'pending' | 'history'>('pending');
@@ -158,8 +162,13 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
   };
 
   const handlePrint = () => {
-    if (totalHandoverCount === 0) {
-      onShowToast('warning', 'Daftar Kosong', 'Tidak ada dokumen dalam daftar pengambilan untuk dicetak.');
+    const count = activeSubTab === 'pending' ? totalHandoverCount : totalHistoryCount;
+    if (count === 0) {
+      onShowToast(
+        'warning',
+        'Daftar Kosong',
+        `Tidak ada dokumen dalam ${activeSubTab === 'pending' ? 'daftar pengambilan' : 'riwayat'} untuk dicetak.`
+      );
       return;
     }
     window.print();
@@ -263,6 +272,21 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
                 )}
               </>
             )}
+
+            {activeSubTab === 'history' && (
+              <button
+                onClick={handlePrint}
+                disabled={totalHistoryCount === 0}
+                className={`min-h-[38px] px-3.5 sm:px-4 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 sm:gap-2 transition-all ${
+                  totalHistoryCount > 0
+                    ? 'bg-[#548A70] hover:bg-[#43725C] text-white shadow-xs'
+                    : 'bg-[#EAE4DC] text-[#79716B] cursor-not-allowed'
+                }`}
+              >
+                <Printer size={16} weight="bold" />
+                <span>Cetak Riwayat</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -365,7 +389,7 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
       <div className="hidden print:block mb-2 pb-1.5 border-b-2 border-black">
         <div className="flex justify-between items-baseline">
           <h1 className="text-base font-black tracking-tight text-black uppercase">
-            DAFTAR URUTAN DOKUMEN FISIK
+            {activeSubTab === 'pending' ? 'DAFTAR URUTAN DOKUMEN FISIK' : 'DAFTAR DOKUMEN FISIK (ARSIP RIWAYAT)'}
           </h1>
           <span className="text-[10px] text-black">Dicetak: {PRINT_DATE_STRING}</span>
         </div>
@@ -481,60 +505,84 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
       ) : (
         /* HISTORY SUB-TAB */
         displayHistoryGroups.length > 0 ? (
-          <div className="space-y-6">
+          <div className="space-y-6 print:space-y-4">
             {displayHistoryGroups.map((group) => (
               <div
                 key={group.surveyor}
-                className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl overflow-hidden shadow-xs"
+                className="bg-[#FFFFFF] border border-[#EAE4DC] print:border-black rounded-2xl print:rounded-none overflow-hidden shadow-xs print:shadow-none"
               >
                 {/* Group Investigator Header */}
-                <div className="bg-[#FAF8F5] border-b border-[#EAE4DC] px-4 py-2.5 flex items-center justify-between">
+                <div className="bg-[#FAF8F5] print:bg-gray-100 border-b border-[#EAE4DC] print:border-black px-4 py-2.5 print:py-1.5 print:px-2 flex items-center justify-between flex-wrap gap-2">
                   <div className="flex items-center gap-2">
-                    <span className="font-extrabold text-xs sm:text-sm text-[#2D2824] uppercase tracking-wide">
+                    <span className="font-extrabold text-xs sm:text-sm print:text-xs text-[#2D2824] print:text-black uppercase tracking-wide">
                       INVESTIGATOR: {group.surveyor}
                     </span>
+                    <span className="text-[11px] print:text-[10px] font-semibold text-[#548A70] print:text-black bg-[#EEF6F1] print:bg-transparent border border-[#C8E2D4] print:border-0 px-2 py-0.5 rounded-full">
+                      {group.items.length} Berkas
+                    </span>
                   </div>
-                  <span className="text-[11px] font-semibold text-[#548A70] bg-[#EEF6F1] border border-[#C8E2D4] px-2 py-0.5 rounded-full">
-                    {group.items.length} Berkas Sudah Diserahkan
-                  </span>
+
+                  {onRestoreAllHistory && (
+                    <button
+                      onClick={() => onRestoreAllHistory(group.surveyor)}
+                      className="print:hidden min-h-[30px] px-2.5 py-1 text-xs rounded-xl bg-[#FFFFFF] border border-[#EAE4DC] hover:border-[#D97757] hover:text-[#D97757] text-[#2D2824] flex items-center gap-1.5 font-semibold transition-colors shadow-xs"
+                      title="Kembalikan semua berkas investigator ini ke Antrean Cetak untuk digabung dengan berkas baru"
+                    >
+                      <ArrowUUpLeft size={14} weight="bold" />
+                      <span>Tarik Semua ke Antrean</span>
+                    </button>
+                  )}
                 </div>
 
                 {/* Table */}
                 <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs border-collapse">
+                  <table className="w-full text-left text-xs border-collapse print-table">
                     <thead>
-                      <tr className="border-b border-[#EAE4DC] text-[11px] text-[#79716B] uppercase bg-[#FFFFFF] font-bold">
+                      <tr className="border-b border-[#EAE4DC] print:border-black text-[11px] text-[#79716B] print:text-black uppercase bg-[#FFFFFF] print:bg-white font-bold">
                         <th className="py-2.5 px-3 w-12 text-center">No</th>
                         <th className="py-2.5 px-3">Nama Nasabah (Debitur)</th>
                         <th className="py-2.5 px-3">Wilayah</th>
                         <th className="py-2.5 px-3 w-28 text-center">Jenis Case</th>
                         <th className="py-2.5 px-3">Keterangan / Verifikasi</th>
+                        <th className="py-2.5 px-3 w-24 text-center print:hidden">Aksi</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-[#EAE4DC]">
+                    <tbody className="divide-y divide-[#EAE4DC] print:divide-black">
                       {group.items.map((it, idx) => (
                         <tr
                           key={it.id}
-                          className="hover:bg-[#FAF8F5] text-[#2D2824] transition-colors"
+                          className="hover:bg-[#FAF8F5] print:hover:bg-white text-[#2D2824] print:text-black transition-colors"
                         >
-                          <td className="py-2 px-3 text-center font-bold text-xs text-[#79716B]">
+                          <td className="py-2 px-3 text-center font-bold text-xs text-[#79716B] print:text-black">
                             {idx + 1}
                           </td>
-                          <td className="py-2 px-3 font-semibold text-xs sm:text-sm">
+                          <td className="py-2 px-3 font-semibold text-xs sm:text-sm print:text-[11px]">
                             {it.debitur}
                           </td>
-                          <td className="py-2 px-3 text-xs text-[#79716B]">
+                          <td className="py-2 px-3 text-xs text-[#79716B] print:text-black print:text-[11px]">
                             {it.wilayah || it.kota || '-'}
                           </td>
                           <td className="py-2 px-3 text-center">
-                            <span className="inline-block px-2 py-0.5 rounded-md font-bold text-[11px] bg-[#EEF6F1] text-[#548A70] border border-[#C8E2D4]">
+                            <span className="inline-block px-2 py-0.5 rounded-md font-bold text-[11px] bg-[#EEF6F1] print:bg-transparent text-[#548A70] print:text-black border border-[#C8E2D4] print:border-0 print-badge">
                               Case {it.jenis_case}
                             </span>
                           </td>
-                          <td className="py-2 px-3 text-xs text-[#79716B]">
+                          <td className="py-2 px-3 text-xs text-[#79716B] print:text-black print:text-[11px]">
                             <span className="truncate block max-w-xs" title={it.notes || ''}>
                               {it.notes || 'Diserahkan via web'}
                             </span>
+                          </td>
+                          <td className="py-2 px-3 text-center print:hidden">
+                            {onRestoreHistoryItem && (
+                              <button
+                                onClick={() => onRestoreHistoryItem(group.surveyor, it.id)}
+                                className="px-2 py-1 rounded-lg text-xs font-semibold text-[#79716B] hover:text-[#D97757] hover:bg-[#FDF1ED] border border-transparent hover:border-[#F7D0C4] inline-flex items-center gap-1 transition-all"
+                                title="Kembalikan berkas ini ke Antrean Cetak"
+                              >
+                                <ArrowUUpLeft size={13} weight="bold" />
+                                <span className="text-[11px]">Tarik</span>
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}

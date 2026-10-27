@@ -699,4 +699,127 @@ export function archiveHandoverToHistory(
   return { nextHandover, nextHistory, archivedCount: newHistoryEntries.length };
 }
 
+/**
+ * Restores a single archived item from history back into the active handover tray.
+ */
+export function restoreHistoryItemToHandover(
+  history: HandoverHistoryState,
+  handover: HandoverState,
+  surveyor: string,
+  historyId: string
+): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredItem?: HandoverItem } {
+  const currentHistory = history[surveyor] ?? [];
+  const targetIdx = currentHistory.findIndex((h) => h.id === historyId);
+  if (targetIdx === -1) {
+    return { nextHistory: history, nextHandover: handover };
+  }
+
+  const histItem = currentHistory[targetIdx];
+  const nextHistoryList = currentHistory.filter((_, idx) => idx !== targetIdx);
+
+  const nextHistory: HandoverHistoryState = { ...history };
+  if (nextHistoryList.length > 0) {
+    nextHistory[surveyor] = nextHistoryList;
+  } else {
+    delete nextHistory[surveyor];
+  }
+
+  const item_data: MasterItem = {
+    no: histItem.no,
+    id_klaim: histItem.id_klaim,
+    debitur: histItem.debitur,
+    kota: histItem.kota,
+    wilayah: histItem.wilayah,
+    surveyor: histItem.surveyor,
+    visit: '',
+    status_laporan: '',
+    hasil_visit: '',
+    jenis_case: histItem.jenis_case,
+    files_count: 0,
+    folder_path: '',
+  };
+
+  const restoredItem: HandoverItem = {
+    id: histItem.id || createId(),
+    debitur: histItem.debitur,
+    no: histItem.no,
+    id_klaim: histItem.id_klaim,
+    kota: histItem.kota,
+    wilayah: histItem.wilayah,
+    jenis_case: histItem.jenis_case,
+    surveyor: histItem.surveyor,
+    originalPosition: 0,
+    item_data,
+    timestamp: new Date().toISOString(),
+  };
+
+  const existingHandover = handover[surveyor] ?? [];
+  const combined = [...existingHandover, restoredItem].sort((a, b) =>
+    normalize(a.debitur).localeCompare(normalize(b.debitur))
+  );
+
+  const nextHandover: HandoverState = {
+    ...handover,
+    [surveyor]: combined,
+  };
+
+  return { nextHistory, nextHandover, restoredItem };
+}
+
+/**
+ * Restores all archived items for a surveyor from history back into active handover.
+ */
+export function restoreAllHistoryToHandover(
+  history: HandoverHistoryState,
+  handover: HandoverState,
+  surveyor: string
+): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredCount: number } {
+  const currentHistory = history[surveyor] ?? [];
+  if (currentHistory.length === 0) {
+    return { nextHistory: history, nextHandover: handover, restoredCount: 0 };
+  }
+
+  const restoredItems: HandoverItem[] = currentHistory.map((histItem) => ({
+    id: histItem.id || createId(),
+    debitur: histItem.debitur,
+    no: histItem.no,
+    id_klaim: histItem.id_klaim,
+    kota: histItem.kota,
+    wilayah: histItem.wilayah,
+    jenis_case: histItem.jenis_case,
+    surveyor: histItem.surveyor,
+    originalPosition: 0,
+    item_data: {
+      no: histItem.no,
+      id_klaim: histItem.id_klaim,
+      debitur: histItem.debitur,
+      kota: histItem.kota,
+      wilayah: histItem.wilayah,
+      surveyor: histItem.surveyor,
+      visit: '',
+      status_laporan: '',
+      hasil_visit: '',
+      jenis_case: histItem.jenis_case,
+      files_count: 0,
+      folder_path: '',
+    },
+    timestamp: new Date().toISOString(),
+  }));
+
+  const nextHistory = { ...history };
+  delete nextHistory[surveyor];
+
+  const existingHandover = handover[surveyor] ?? [];
+  const combined = [...existingHandover, ...restoredItems].sort((a, b) =>
+    normalize(a.debitur).localeCompare(normalize(b.debitur))
+  );
+
+  const nextHandover: HandoverState = {
+    ...handover,
+    [surveyor]: combined,
+  };
+
+  return { nextHistory, nextHandover, restoredCount: restoredItems.length };
+}
+
 
