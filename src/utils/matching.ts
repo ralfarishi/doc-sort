@@ -104,15 +104,18 @@ export function levenshteinDistance(s1: string, s2: string): number {
     curr[0] = i;
     const c1 = a[i - 1];
     for (let j = 1; j <= bLen; j++) {
+      const pDiag = prev[j - 1] ?? 0;
+      const pTop = prev[j] ?? 0;
+      const cLeft = curr[j - 1] ?? 0;
       if (c1 === b[j - 1]) {
-        curr[j] = prev[j - 1];
+        curr[j] = pDiag;
       } else {
-        curr[j] = Math.min(prev[j - 1], prev[j], curr[j - 1]) + 1;
+        curr[j] = Math.min(pDiag, pTop, cLeft) + 1;
       }
     }
     prev = curr;
   }
-  return prev[bLen];
+  return prev[bLen] ?? 0;
 }
 
 /**
@@ -244,7 +247,9 @@ export function nameSimilarity(
       let bestIdx = -1;
       for (let idx2 = 0; idx2 < tokens2.length; idx2++) {
         if (used2.has(idx2)) continue;
-        const sim = wordSimilarity(w1, tokens2[idx2]);
+        const t2 = tokens2[idx2];
+        if (!t2) continue;
+        const sim = wordSimilarity(w1, t2);
         if (sim > bestSim) {
           bestSim = sim;
           bestIdx = idx2;

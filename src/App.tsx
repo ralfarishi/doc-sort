@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { Navbar, type ActiveTab } from './components/Navbar';
 import { SearchView } from './components/SearchView';
 import { InsertWizardView } from './components/InsertWizardView';
@@ -21,16 +21,14 @@ import {
   backfillFolderInfo,
   addToTransit,
   removeFiledFromTransit,
-  takeItemsForHandover,
-  returnHandoverItemToMaster,
-  clearHandoverList,
-  archiveHandoverToHistory,
-  restoreHistoryItemToHandover,
-  restoreAllHistoryToHandover,
+  reconcileHandoverWithHistory,
+  validateDataIntegrity,
   simulateHandInsertion,
   getCleanInvestigatorName,
+  STORAGE_KEYS,
 } from './utils/logic';
 import { useCloudSyncedState } from './hooks/useCloudSyncedState';
+import { useOrganizerOperations } from './hooks/useOrganizerOperations';
 
 // Import raw JSON data
 import rawData from './data/indexed_visit_data.json';
@@ -45,6 +43,7 @@ const folderRecords = (rawData as any).folders as FolderRecord[];
 export function App() {
   // Master Desk Piles (persisted locally & synced to Turso; automatically backfills missing photo info on load)
   const [masterState, setMasterState] = useCloudSyncedState<MasterState>({
+    storageKey: STORAGE_KEYS.master,
     load: () => loadStored('master', isMasterState, initialTumpukan),
     save: (state) => saveStored('master', state),
     fetchRemote: () => fetchServerSnapshot('master', isMasterState),
@@ -55,6 +54,7 @@ export function App() {
 
   // Transit Trays per Surveyor (persisted locally & synced to Turso; empty remote is authoritative)
   const [transitState, setTransitState] = useCloudSyncedState<TransitState>({
+    storageKey: STORAGE_KEYS.transit,
     load: () => loadStored('transit', isTransitState, {}),
     save: (state) => saveStored('transit', state),
     fetchRemote: () => fetchServerSnapshot('transit', isTransitState),
@@ -64,6 +64,7 @@ export function App() {
 
   // Handover Lists per Surveyor (persisted locally & synced to Turso)
   const [handoverState, setHandoverState] = useCloudSyncedState<HandoverState>({
+    storageKey: STORAGE_KEYS.handover,
     load: () => loadStored('handover', isHandoverState, {}),
     save: (state) => saveStored('handover', state),
     fetchRemote: () => fetchServerSnapshot('handover', isHandoverState),
@@ -73,12 +74,31 @@ export function App() {
 
   // Handover History per Surveyor (persisted locally & synced to Turso)
   const [historyState, setHistoryState] = useCloudSyncedState<HandoverHistoryState>({
+    storageKey: STORAGE_KEYS.history,
     load: () => loadStored('history', isHandoverHistoryState, initialHistory),
     save: (state) => saveStored('history', state),
     fetchRemote: () => fetchServerSnapshot('history', isHandoverHistoryState),
     pushRemote: (state) => pushServerSnapshot('history', state),
     adoptEmptyRemote: false, // first-run seeds the cloud from initialHistory
   });
+
+  // Auto-heal: Purge any ghost items in handoverState that are already archived in historyState
+  useEffect(() => {
+    setHandoverState((currentHandover) => {
+      const reconciled = reconcileHandoverWithHistory(currentHandover, historyState);
+      return reconciled === currentHandover ? currentHandover : reconciled;
+    });
+  }, [historyState, setHandoverState]);
+
+  // Dev Invariant Monitor: continuously asserts ground truth consistency
+  useEffect(() => {
+    if (import.meta.env.DEV) {
+      const report = validateDataIntegrity(masterState, handoverState, historyState);
+      if (!report.isValid) {
+        console.warn('[INTEGRITY VIOLATION DETECTED]', report.violations);
+      }
+    }
+  }, [masterState, handoverState, historyState]);
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('search');
   const [activeSurveyor, setActiveSurveyor] = useState<string>('CANDRA MAULANA');
@@ -125,100 +145,23 @@ export function App() {
     return Object.values(handoverState).reduce((acc, list) => acc + list.length, 0);
   }, [handoverState]);
 
-  // Handover Operations
-  const handleTakeItemsForHandover = useCallback(
-    (surveyor: string, itemKeys: Set<string>) => {
-      const cleanSurv = getCleanInvestigatorName(surveyor);
-      const { nextMaster, nextHandover } = takeItemsForHandover(
-        masterState,
-        handoverState,
-        cleanSurv,
-        itemKeys
-      );
-      setMasterState(nextMaster);
-      setHandoverState(nextHandover);
-    },
-    [masterState, handoverState, setMasterState, setHandoverState]
-  );
-
-  const handleReturnHandoverItem = useCallback(
-    (surveyor: string, handoverId: string) => {
-      const cleanSurv = getCleanInvestigatorName(surveyor);
-      const { nextMaster, nextHandover } = returnHandoverItemToMaster(
-        masterState,
-        handoverState,
-        cleanSurv,
-        handoverId
-      );
-      setMasterState(nextMaster);
-      setHandoverState(nextHandover);
-    },
-    [masterState, handoverState, setMasterState, setHandoverState]
-  );
-
-  const handleClearHandover = useCallback(
-    (surveyor?: string) => {
-      const cleanSurv = surveyor ? getCleanInvestigatorName(surveyor) : undefined;
-      setHandoverState((prev) => clearHandoverList(prev, cleanSurv));
-    },
-    [setHandoverState]
-  );
-
-  const handleArchiveHandover = useCallback(
-    (surveyor: string, notes?: string) => {
-      const cleanSurv = getCleanInvestigatorName(surveyor);
-      const { nextHandover, nextHistory } = archiveHandoverToHistory(
-        handoverState,
-        historyState,
-        cleanSurv,
-        notes
-      );
-      setHandoverState(nextHandover);
-      setHistoryState(nextHistory);
-    },
-    [handoverState, historyState, setHandoverState, setHistoryState]
-  );
-
-  const handleRestoreHistoryItem = useCallback(
-    (surveyor: string, historyId: string) => {
-      const cleanSurv = getCleanInvestigatorName(surveyor);
-      const { nextHistory, nextHandover, restoredItem } = restoreHistoryItemToHandover(
-        historyState,
-        handoverState,
-        cleanSurv,
-        historyId
-      );
-      setHistoryState(nextHistory);
-      setHandoverState(nextHandover);
-      if (restoredItem) {
-        showToast(
-          'success',
-          'Ditarik ke Antrean Cetak',
-          `${restoredItem.debitur} dikembalikan ke Antrean Cetak.`
-        );
-      }
-    },
-    [historyState, handoverState, setHistoryState, setHandoverState, showToast]
-  );
-
-  const handleRestoreAllHistory = useCallback(
-    (surveyor: string) => {
-      const cleanSurv = getCleanInvestigatorName(surveyor);
-      const { nextHistory, nextHandover, restoredCount } = restoreAllHistoryToHandover(
-        historyState,
-        handoverState,
-        cleanSurv
-      );
-      setHistoryState(nextHistory);
-      setHandoverState(nextHandover);
-      showToast(
-        'success',
-        'Batch Dikembalikan ke Antrean',
-        `${restoredCount} berkas ${cleanSurv} ditarik kembali ke Antrean Cetak.`
-      );
-    },
-    [historyState, handoverState, setHistoryState, setHandoverState, showToast]
-  );
+  // Unified Handover Operations Coordinator
+  const {
+    takeForHandover: handleTakeItemsForHandover,
+    returnFromHandover: handleReturnHandoverItem,
+    clearHandover: handleClearHandover,
+    archiveHandover: handleArchiveHandover,
+    restoreHistoryItem: handleRestoreHistoryItem,
+    restoreAllHistory: handleRestoreAllHistory,
+  } = useOrganizerOperations({
+    masterState,
+    setMasterState,
+    handoverState,
+    setHandoverState,
+    historyState,
+    setHistoryState,
+    onShowToast: showToast,
+  });
 
   // Quick insertion of a single document (from Search or Status)
   const handleQuickInsertItem = (
@@ -334,6 +277,8 @@ export function App() {
         {activeTab === 'search' && (
           <SearchView
             masterState={masterState}
+            handoverState={handoverState}
+            historyState={historyState}
             excelList={excelRecords}
             folderList={folderRecords}
             activeSurveyor={activeSurveyor}

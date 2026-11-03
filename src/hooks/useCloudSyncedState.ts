@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 
 export interface CloudSyncOptions<T> {
+  /** Optional key in localStorage for cross-tab synchronization. */
+  storageKey?: string;
   /** Initial state from localStorage (or seed data). */
   load: () => T;
   /** Persist to localStorage. */
@@ -48,6 +50,33 @@ export function useCloudSyncedState<T extends object>(
     stateRef.current = state;
   }, [state]);
 
+  // Cross-tab synchronization: respond immediately when another open tab writes to localStorage
+  useEffect(() => {
+    const key = optionsRef.current.storageKey;
+    if (!key || typeof window === 'undefined') return;
+
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key !== key || e.newValue === null) return;
+      try {
+        const { load, normalize } = optionsRef.current;
+        const reloaded = load();
+        const nextState = normalize ? normalize(reloaded) : reloaded;
+        const serialized = JSON.stringify(nextState);
+        if (serialized !== JSON.stringify(stateRef.current)) {
+          lastSyncedRef.current = serialized;
+          setState(nextState);
+        }
+      } catch (err) {
+        console.error(`Cross-tab sync error for key ${key}:`, err);
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     const { fetchRemote, adoptEmptyRemote, normalize } = optionsRef.current;
@@ -78,8 +107,17 @@ export function useCloudSyncedState<T extends object>(
     save(state);
     const serialized = JSON.stringify(state);
     if (serialized === lastSyncedRef.current) return;
-    lastSyncedRef.current = serialized;
-    void pushRemote(state);
+
+    let cancelled = false;
+    pushRemote(state).then((success) => {
+      if (!cancelled && success) {
+        lastSyncedRef.current = serialized;
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [state, isHydrated]);
 
   return [state, setState];

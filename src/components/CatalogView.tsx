@@ -11,8 +11,15 @@ import {
   CheckSquare,
   Square,
 } from '@phosphor-icons/react';
-import type { MasterState, HandoverHistoryState, TransitState, HandoverState } from '../types';
-import { exportFullBackupToJson, isMasterState, isHandoverHistoryState, isTransitState, isHandoverState } from '../utils/logic';
+import type { MasterState, MasterItem, HandoverHistoryState, TransitState, HandoverState } from '../types';
+import {
+  exportFullBackupToJson,
+  formatCatalogMarkdown,
+  isMasterState,
+  isHandoverHistoryState,
+  isTransitState,
+  isHandoverState,
+} from '../utils/logic';
 import { BottomSheet } from './BottomSheet';
 
 interface CatalogViewProps {
@@ -29,6 +36,9 @@ interface CatalogViewProps {
   onShowToast: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
   onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
 }
+
+const getUniqueSorted = (items: MasterItem[], field: 'jenis_case' | 'wilayah'): string[] =>
+  Array.from(new Set(items.map((it) => it[field]).filter(Boolean))).sort();
 
 export const CatalogView: React.FC<CatalogViewProps> = ({
   masterState,
@@ -56,36 +66,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     [masterState, activeSurveyor]
   );
 
-  // Available filters
-  const availableCases = useMemo(() => {
-    const set = new Set<string>();
-    currentItems.forEach((it) => {
-      if (it.jenis_case) set.add(it.jenis_case);
-    });
-    return Array.from(set).sort();
-  }, [currentItems]);
+  const availableCases = useMemo(() => getUniqueSorted(currentItems, 'jenis_case'), [currentItems]);
+  const availableWilayah = useMemo(() => getUniqueSorted(currentItems, 'wilayah'), [currentItems]);
 
-  const availableWilayah = useMemo(() => {
-    const set = new Set<string>();
-    currentItems.forEach((it) => {
-      if (it.wilayah) set.add(it.wilayah);
-    });
-    return Array.from(set).sort();
-  }, [currentItems]);
-
-  // Filtered items
   const filteredItems = useMemo(() => {
+    const q = searchFilter.toLowerCase();
     return currentItems.filter((it) => {
-      const q = searchFilter.toLowerCase();
       const matchSearch =
         !q ||
         it.debitur.toLowerCase().includes(q) ||
         String(it.no).includes(q) ||
         String(it.id_klaim).includes(q);
-
       const matchCase = caseFilter === 'ALL' || it.jenis_case === caseFilter;
       const matchWilayah = wilayahFilter === 'ALL' || it.wilayah === wilayahFilter;
-
       return matchSearch && matchCase && matchWilayah;
     });
   }, [currentItems, searchFilter, caseFilter, wilayahFilter]);
@@ -98,25 +91,28 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     const reader = new FileReader();
     reader.onload = (event) => {
       try {
-        const parsed: any = JSON.parse(event.target?.result as string);
-        
-        // Format A: Full Backup Bundle { version, master, history, transit, handover }
-        if (parsed && typeof parsed === 'object' && parsed.master && isMasterState(parsed.master)) {
-          onImportState(parsed.master);
-          let extraMsg = 'Data tumpukan meja diperbarui.';
-          if (parsed.history && isHandoverHistoryState(parsed.history) && onImportHistoryState) {
-            onImportHistoryState(parsed.history);
-            extraMsg = 'Data meja & riwayat diserahkan diperbarui.';
+        const parsed: unknown = JSON.parse(String(event.target?.result ?? ''));
+
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          const bundle = parsed as Record<string, unknown>;
+          // Format A: Full Backup Bundle { version, master, history, transit, handover }
+          if (bundle.master && isMasterState(bundle.master)) {
+            onImportState(bundle.master);
+            let extraMsg = 'Data tumpukan meja diperbarui.';
+            if (bundle.history && isHandoverHistoryState(bundle.history) && onImportHistoryState) {
+              onImportHistoryState(bundle.history);
+              extraMsg = 'Data meja & riwayat diserahkan diperbarui.';
+            }
+            if (bundle.transit && isTransitState(bundle.transit) && onImportTransitState) {
+              onImportTransitState(bundle.transit);
+            }
+            if (bundle.handover && isHandoverState(bundle.handover) && onImportHandoverState) {
+              onImportHandoverState(bundle.handover);
+            }
+            setIsActionSheetOpen(false);
+            onShowToast('success', 'Full Backup Berhasil Dipulihkan', extraMsg);
+            return;
           }
-          if (parsed.transit && isTransitState(parsed.transit) && onImportTransitState) {
-            onImportTransitState(parsed.transit);
-          }
-          if (parsed.handover && isHandoverState(parsed.handover) && onImportHandoverState) {
-            onImportHandoverState(parsed.handover);
-          }
-          setIsActionSheetOpen(false);
-          onShowToast('success', 'Full Backup Berhasil Dipulihkan', extraMsg);
-          return;
         }
 
         // Format B: Legacy Master-only { [surveyor]: MasterItem[] }
@@ -135,31 +131,19 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
     e.target.value = '';
   };
 
-  // Copy Markdown
   const handleCopyMarkdown = () => {
     if (currentItems.length === 0) {
       onShowToast('warning', 'Data Kosong', 'Tidak ada data untuk disalin.');
       return;
     }
-
-    let md = `# KATALOG MASTER FISIK: ORDNER ${activeSurveyor}\n\n`;
-    md += `Total Berkas: ${currentItems.length} Dokumen (A–Z)\n\n`;
-    md += `| No. Fisik | Nama Debitur | Case | No. Excel | Wilayah | ID Klaim | Foto | Label Stiker |\n`;
-    md += `|:---:|---|:---:|:---:|---|:---:|:---:|---|\n`;
-
-    currentItems.forEach((it, idx) => {
-      const label = `[${activeSurveyor.slice(0, 6)}] ${it.jenis_case} No.${it.no} - ${it.debitur}`;
-      md += `| #${idx + 1} | **${it.debitur}** | ${it.jenis_case} | #${it.no} | ${it.wilayah} | ${it.id_klaim} | ✅ ${it.files_count} | \`${label}\` |\n`;
-    });
-
-    navigator.clipboard.writeText(md);
+    navigator.clipboard.writeText(formatCatalogMarkdown(activeSurveyor, currentItems));
     setIsActionSheetOpen(false);
     onShowToast('success', 'Markdown Disalin!', 'Katalog markdown telah disalin ke clipboard.');
   };
 
   return (
     <div className="space-y-3">
-      {/* Streamlined Top Bar (Title + Ordner Picker + Single Action Sheet Button) */}
+      {/* Streamlined Top Bar */}
       <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-3 sm:p-4 shadow-xs space-y-3">
         <div className="flex items-center justify-between gap-2">
           <div className="min-w-0">
@@ -177,7 +161,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons */}
           <div className="flex items-center gap-1.5 shrink-0">
             {onTakeForHandover && currentItems.length > 0 && !isSelectMode && (
               <button
@@ -191,7 +174,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               </button>
             )}
 
-            {/* Single Action Sheet Menu Button */}
             <button
               onClick={() => setIsActionSheetOpen(true)}
               className="w-9 h-9 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] flex items-center justify-center transition-colors shrink-0"
@@ -263,7 +245,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             placeholder="Saring nama debitur di ordner ini..."
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm bg-[#F6F2EB] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-none focus:border-[#D97757] focus:bg-[#FFFFFF]"
+            className="w-full pl-9 pr-8 py-2 text-xs sm:text-sm bg-[#F6F2EB] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-hidden focus:border-[#D97757] focus:bg-[#FFFFFF]"
           />
           {searchFilter && (
             <button
@@ -275,14 +257,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           )}
         </div>
 
-        {/* HORIZONTAL SCROLLING FILTER CHIPS (CLEAN & COMPACT) */}
+        {/* Horizontal Scrolling Filter Chips */}
         <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-xs">
           <button
             onClick={() => setCaseFilter('ALL')}
             className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-              caseFilter === 'ALL'
-                ? 'bg-[#2D2824] text-white'
-                : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+              caseFilter === 'ALL' ? 'bg-[#2D2824] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
             }`}
           >
             Semua Case
@@ -292,9 +272,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               key={c}
               onClick={() => setCaseFilter(c)}
               className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-                caseFilter === c
-                  ? 'bg-[#D97757] text-white'
-                  : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+                caseFilter === c ? 'bg-[#D97757] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
               }`}
             >
               Case {c}
@@ -306,9 +284,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           <button
             onClick={() => setWilayahFilter('ALL')}
             className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-              wilayahFilter === 'ALL'
-                ? 'bg-[#2D2824] text-white'
-                : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+              wilayahFilter === 'ALL' ? 'bg-[#2D2824] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
             }`}
           >
             Semua Wilayah
@@ -318,9 +294,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               key={w}
               onClick={() => setWilayahFilter(w)}
               className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-                wilayahFilter === w
-                  ? 'bg-[#5D7CB0] text-white'
-                  : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+                wilayahFilter === w ? 'bg-[#5D7CB0] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
               }`}
             >
               {w}
@@ -329,7 +303,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         </div>
       </div>
 
-      {/* Catalog List (Starts immediately on the first screen!) */}
+      {/* Catalog List */}
       <div className="space-y-2">
         {filteredItems.length > 0 ? (
           <div className="grid gap-2">
@@ -342,13 +316,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                 <div
                   key={itemKey}
                   className={`bg-[#FFFFFF] border rounded-2xl p-3 shadow-xs transition-all flex items-center justify-between gap-3 ${
-                    isSelected
-                      ? 'border-[#D97757] bg-[#FDF1ED]'
-                      : 'border-[#EAE4DC] hover:border-[#D97757]'
+                    isSelected ? 'border-[#D97757] bg-[#FDF1ED]' : 'border-[#EAE4DC] hover:border-[#D97757]'
                   }`}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    {/* Checkbox in select mode */}
                     {isSelectMode && (
                       <button
                         onClick={() => {
@@ -361,20 +332,14 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         }}
                         className="text-[#D97757] p-1 shrink-0"
                       >
-                        {isSelected ? (
-                          <CheckSquare size={20} weight="fill" />
-                        ) : (
-                          <Square size={20} />
-                        )}
+                        {isSelected ? <CheckSquare size={20} weight="fill" /> : <Square size={20} />}
                       </button>
                     )}
 
-                    {/* Index Badge */}
                     <div className="w-8 h-8 rounded-xl bg-[#F6F2EB] text-[#2D2824] font-extrabold flex items-center justify-center shrink-0 text-xs">
                       #{idx + 1}
                     </div>
 
-                    {/* Main Details */}
                     <div className="min-w-0">
                       <h3 className="font-bold text-xs sm:text-sm text-[#2D2824] truncate leading-tight">
                         {it.debitur}
@@ -393,9 +358,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Actions */}
                   <div className="flex items-center gap-1.5 shrink-0">
-                    {/* Take for Handover Button (Single) */}
                     {onTakeForHandover && !isSelectMode && (
                       <button
                         onClick={() => {
@@ -413,7 +376,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       </button>
                     )}
 
-                    {/* Copy Sticker Label Action */}
                     <button
                       onClick={() => {
                         navigator.clipboard.writeText(sticker);
@@ -444,7 +406,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         subtitle={`Manajemen data tumpukan fisik untuk ORDNER ${activeSurveyor}`}
       >
         <div className="space-y-2">
-          {/* Export JSON (Full Backup) */}
           <button
             onClick={() => {
               exportFullBackupToJson(masterState, historyState, transitState, handoverState);
@@ -465,7 +426,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </div>
           </button>
 
-          {/* Import JSON */}
           <label className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#FAF8F5] hover:bg-[#F6F2EB] border border-[#EAE4DC] flex items-center gap-3 text-left transition-colors cursor-pointer">
             <div className="w-8 h-8 rounded-xl bg-[#FCF7ED] text-[#C48A3F] flex items-center justify-center shrink-0">
               <UploadSimple size={18} weight="bold" />
@@ -481,7 +441,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             <input type="file" accept=".json" onChange={handleFileUpload} className="hidden" />
           </label>
 
-          {/* Copy Markdown */}
           <button
             onClick={handleCopyMarkdown}
             className="w-full min-h-[48px] px-4 py-3 rounded-2xl bg-[#FAF8F5] hover:bg-[#F6F2EB] border border-[#EAE4DC] flex items-center gap-3 text-left transition-colors"
@@ -499,7 +458,6 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </div>
           </button>
 
-          {/* Reset State */}
           <button
             onClick={() => {
               setIsActionSheetOpen(false);

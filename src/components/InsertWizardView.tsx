@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import {
   Tray,
   CheckCircle,
@@ -12,19 +11,26 @@ import {
   Check,
   Funnel,
 } from '@phosphor-icons/react';
-import type { ExcelRecord, FolderRecord, MasterState, MasterItem, InsertionStep, MatchResult, MatchCandidate, TransitState, TransitItem } from '../types';
-import { matchQuery, simulateHandInsertion, getCleanInvestigatorName, createId } from '../utils/logic';
+import type {
+  ExcelRecord,
+  FolderRecord,
+  MasterState,
+  MasterItem,
+  InsertionStep,
+  TransitState,
+  TransitItem,
+} from '../types';
+import { getCleanInvestigatorName } from '../utils/logic';
 import { ConfirmModal } from './ConfirmModal';
+import { useInsertWizard } from '../hooks/useInsertWizard';
 
 interface InsertWizardViewProps {
   masterState: MasterState;
   transitState: TransitState;
   excelList: ExcelRecord[];
   folderList: FolderRecord[];
-  /** Active ordner. Owned by the parent so the Navbar and the wizard can never disagree. */
   activeSurveyor: string;
   surveyorsList: string[];
-  /** Names to pre-fill the textarea with (e.g. from the Status "missing documents" list). */
   prefillNames?: string[];
   onSelectSurveyor: (surveyor: string) => void;
   onSaveNewMaster: (surveyor: string, newPile: MasterItem[], steps: InsertionStep[]) => void;
@@ -47,359 +53,48 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
   onClaimTransit,
   onShowToast,
 }) => {
-  const [stage, setStage] = useState<'input' | 'review' | 'stepper'>('input');
-  const [mode, setMode] = useState<'sisip' | 'baru'>('sisip');
-  const [rawInputText, setRawInputText] = useState(() => prefillNames.join('\n'));
-
-  // Processing state
-  const [verifiedResults, setVerifiedResults] = useState<MatchResult[]>([]);
-  const [failedQueries, setFailedQueries] = useState<string[]>([]);
-  const [calculatedSteps, setCalculatedSteps] = useState<InsertionStep[] | null>(null);
-  const [currentStepIdx, setCurrentStepIdx] = useState(0);
-  const [showFullTable, setShowFullTable] = useState(false);
-  const [isProblemConfirmModalOpen, setIsProblemConfirmModalOpen] = useState(false);
-
-  const handleSurveyorChange = (newSurv: string) => {
-    onSelectSurveyor(newSurv);
-    // Re-evaluate any existing results against the newly selected ordner.
-    if (verifiedResults.length > 0) {
-      setVerifiedResults(
-        verifiedResults.map((r) => {
-          const re = matchQuery(r.query, excelList, folderList, newSurv);
-          return re && re.found_excel ? re : r;
-        })
-      );
-    }
-  };
-
-  const currentDeskPile = masterState[selectedSurveyor] || [];
-
-  const pendingWarnings = verifiedResults.filter(
-    (m) => m.isUnassigned || m.surveyorMismatch
-  );
-
-  // Stage 1 -> Stage 2: Parse and Match
-  const handleVerify = () => {
-    const lines = rawInputText
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0);
-
-    if (lines.length === 0) {
-      onShowToast('warning', 'Input Kosong', 'Ketik atau tempelkan minimal satu nama debitur.');
-      return;
-    }
-
-    const matched: MatchResult[] = [];
-    const failed: string[] = [];
-
-    for (const line of lines) {
-      // Pass selectedSurveyor for priority & validation!
-      const res = matchQuery(line, excelList, folderList, selectedSurveyor);
-      if (res && res.found_excel && res.excel) {
-        matched.push(res);
-      } else {
-        failed.push(line);
-      }
-    }
-
-    if (matched.length === 0) {
-      onShowToast(
-        'error',
-        'Tidak Ada Berkas Valid',
-        'Semua nama yang dimasukkan tidak ditemukan di Master Excel.'
-      );
-      setVerifiedResults([]);
-      setFailedQueries(failed);
-      return;
-    }
-
-    setVerifiedResults(matched);
-    setFailedQueries(failed);
-    setStage('review');
-
-    const warningCount = matched.filter(
-      (m) => m.hasAmbiguity || m.surveyorMismatch || m.isUnassigned
-    ).length;
-
-    if (warningCount > 0) {
-      onShowToast(
-        'warning',
-        'Verifikasi Memerlukan Review',
-        `Ditemukan ${warningCount} berkas dengan nama identik atau status belum ditugaskan.`
-      );
-    } else {
-      onShowToast(
-        'success',
-        'Verifikasi Selesai',
-        `${matched.length} berkas valid dan cocok dengan Ordner ${selectedSurveyor}.`
-      );
-    }
-  };
-
-  // Change selected candidate for ambiguous / multi-match items
-  const handleSelectCandidate = (resultIndex: number, candidate: MatchCandidate) => {
-    setVerifiedResults((prev) => {
-      const updated = [...prev];
-      const cur = updated[resultIndex];
-      const cleanTarget = getCleanInvestigatorName(selectedSurveyor);
-      const candSurveyor = getCleanInvestigatorName(candidate.excel.surveyor);
-      const isUnassigned = candidate.isUnassigned;
-      const surveyorMismatch = Boolean(cleanTarget && !isUnassigned && candSurveyor !== cleanTarget);
-
-      let warningMessage: string | undefined = undefined;
-      if (isUnassigned) {
-        warningMessage = 'Nasabah ini tercatat "Belum Ditugaskan" di Master Excel.';
-      } else if (surveyorMismatch) {
-        warningMessage = `Tercatat untuk investigator ${candidate.excel.surveyor}, bukan ${selectedSurveyor}.`;
-      }
-
-      updated[resultIndex] = {
-        ...cur,
-        excel: candidate.excel,
-        folders: candidate.folders,
-        score: candidate.score,
-        isUnassigned,
-        surveyorMismatch,
-        warningMessage,
-      };
-      return updated;
-    });
-  };
-
-  // Assign individual unassigned/mismatched item to current ordner
-  const handleAssignItemToCurrentOrdner = (index: number) => {
-    setVerifiedResults((prev) => {
-      const updated = [...prev];
-      const cur = updated[index];
-      if (!cur.excel) return prev;
-      updated[index] = {
-        ...cur,
-        excel: {
-          ...cur.excel,
-          surveyor: selectedSurveyor,
-        },
-        isUnassigned: false,
-        surveyorMismatch: false,
-        warningMessage: undefined,
-      };
-      return updated;
-    });
-    onShowToast(
-      'success',
-      'Ditetapkan ke Ordner Ini',
-      `${verifiedResults[index].excel?.debitur} resmi dialihkan ke ${selectedSurveyor}.`
-    );
-  };
-
-  // Assign all pending warnings to current ordner at once
-  const handleAssignAllWarnings = () => {
-    setVerifiedResults((prev) =>
-      prev.map((m) => {
-        if ((m.isUnassigned || m.surveyorMismatch) && m.excel) {
-          return {
-            ...m,
-            excel: {
-              ...m.excel,
-              surveyor: selectedSurveyor,
-            },
-            isUnassigned: false,
-            surveyorMismatch: false,
-            warningMessage: undefined,
-          };
-        }
-        return m;
-      })
-    );
-    onShowToast(
-      'success',
-      'Semua Berkas Ditetapkan',
-      `${pendingWarnings.length} berkas ditetapkan ke Ordner ${selectedSurveyor}.`
-    );
-  };
-
-  // Send a mismatched item to target surveyor's Transit Tray
-  const handleSendToTransit = (index: number) => {
-    const item = verifiedResults[index];
-    if (!item || !item.excel) return;
-    const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
-    if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') {
-      onShowToast('warning', 'Surveyor Tidak Diketahui', 'Berkas ini belum ditugaskan ke surveyor manapun di database.');
-      return;
-    }
-
-    const transitItem: TransitItem = {
-      id: createId(),
-      debitur: item.excel.debitur,
-      sourceSurveyor: selectedSurveyor,
-      targetSurveyor: targetSurv,
-      timestamp: new Date().toISOString(),
-      excelRecord: item.excel,
-      folderRecord: item.folders.length > 0 ? item.folders[0] : undefined,
-    };
-
-    onAddToTransit(transitItem);
-    setVerifiedResults((prev) => prev.filter((_, idx) => idx !== index));
-    onShowToast(
-      'info',
-      `Disisihkan ke Map Transit ${targetSurv}`,
-      `Kertas fisik "${item.excel.debitur}" silakan masukkan ke stopmap transit ${targetSurv} di meja.`
-    );
-  };
-
-  // Bulk send all surveyor mismatches to their respective Transit Trays
-  const handleSendAllMismatchesToTransit = () => {
-    const mismatches = verifiedResults.filter((m) => m.surveyorMismatch && m.excel);
-    if (mismatches.length === 0) return;
-
-    const successfullyRoutedKeys = new Set<string>();
-
-    mismatches.forEach((item) => {
-      if (!item.excel) return;
-      const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
-      if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') return;
-
-      const transitItem: TransitItem = {
-        id: createId(),
-        debitur: item.excel.debitur,
-        sourceSurveyor: selectedSurveyor,
-        targetSurveyor: targetSurv,
-        timestamp: new Date().toISOString(),
-        excelRecord: item.excel,
-        folderRecord: item.folders.length > 0 ? item.folders[0] : undefined,
-      };
-      onAddToTransit(transitItem);
-      successfullyRoutedKeys.add(`${item.excel.jenis_case}#${item.excel.no}`);
-    });
-
-    if (successfullyRoutedKeys.size > 0) {
-      setVerifiedResults((prev) =>
-        prev.filter((m) => !m.excel || !successfullyRoutedKeys.has(`${m.excel.jenis_case}#${m.excel.no}`))
-      );
-      onShowToast(
-        'info',
-        'Semua Mismatch Disisihkan ke Transit',
-        `${successfullyRoutedKeys.size} berkas telah dialihkan ke map transit surveyor masing-masing.`
-      );
-    } else {
-      onShowToast(
-        'warning',
-        'Tidak Dapat Dialihkan',
-        'Semua berkas yang bermasalah belum memiliki target surveyor yang jelas di Excel.'
-      );
-    }
-  };
-
-  // Remove an item from verified list
-  const handleRemoveItem = (index: number) => {
-    setVerifiedResults((prev) => prev.filter((_, idx) => idx !== index));
-  };
-
-  // Stage 2 -> Stage 3: Calculate Physical Insertion Steps
-  const handleProceedToStepper = () => {
-    if (verifiedResults.length === 0) {
-      onShowToast('warning', 'Daftar Kosong', 'Tidak ada berkas yang valid untuk disusun.');
-      return;
-    }
-
-    if (pendingWarnings.length > 0) {
-      setIsProblemConfirmModalOpen(true);
-      return;
-    }
-
-    startStepperExecution(verifiedResults);
-  };
-
-  const startStepperExecution = (items: MatchResult[]) => {
-    const basePile = mode === 'baru' ? [] : currentDeskPile;
-    const { steps } = simulateHandInsertion(basePile, items, selectedSurveyor);
-
-    setCalculatedSteps(steps);
-    setCurrentStepIdx(0);
-    setShowFullTable(false);
-    setStage('stepper');
-  };
-
-  const handleConfirmModalAndProceed = () => {
-    const resolvedItems = verifiedResults.map((m) => {
-      if ((m.isUnassigned || m.surveyorMismatch) && m.excel) {
-        return {
-          ...m,
-          excel: {
-            ...m.excel,
-            surveyor: selectedSurveyor,
-          },
-          isUnassigned: false,
-          surveyorMismatch: false,
-          warningMessage: undefined,
-        };
-      }
-      return m;
-    });
-
-    setVerifiedResults(resolvedItems);
-    setIsProblemConfirmModalOpen(false);
-    startStepperExecution(resolvedItems);
-    onShowToast('info', 'Penataan Fisik Meja', `${resolvedItems.length} berkas siap ditata ke Ordner ${selectedSurveyor}.`);
-  };
-
-  // Stage 3 -> Save to master state
-  const handleSaveToDesk = () => {
-    if (!calculatedSteps) return;
-
-    const basePile = mode === 'baru' ? [] : currentDeskPile;
-    const matchedItems: MatchResult[] = calculatedSteps.map((s) => ({
-      query: s.debitur,
-      found_excel: true,
-      score: 1.0,
-      excel: {
-        debitur: s.item_data.debitur,
-        no: s.item_data.no,
-        id_klaim: s.item_data.id_klaim,
-        kota: s.item_data.kota,
-        wilayah: s.item_data.wilayah,
-        jenis_case: s.item_data.jenis_case,
-        surveyor: selectedSurveyor,
-        visit: s.item_data.visit,
-        status_laporan: s.item_data.status_laporan,
-        hasil_visit: s.item_data.hasil_visit,
-      },
-      folders: [],
-      candidates: [],
-      hasAmbiguity: false,
-      surveyorMismatch: false,
-      isUnassigned: false,
-    }));
-
-    const { deskPile } = simulateHandInsertion(basePile, matchedItems, selectedSurveyor);
-
-    onSaveNewMaster(selectedSurveyor, deskPile, calculatedSteps);
-    onShowToast(
-      'success',
-      'Tersimpan ke Meja!',
-      `${calculatedSteps.length} berkas berhasil ditambahkan ke Ordner ${selectedSurveyor}.`
-    );
-
-    // Reset wizard
-    setRawInputText('');
-    setVerifiedResults([]);
-    setCalculatedSteps(null);
-    setCurrentStepIdx(0);
-    setStage('input');
-  };
-
-  const handleReset = () => {
-    setVerifiedResults([]);
-    setCalculatedSteps(null);
-    setCurrentStepIdx(0);
-    setFailedQueries([]);
-    setStage('input');
-  };
-
-  const handleInsertSample = () => {
-    const sample = `A SUMARDI\nACAH\nADE SUKANDA\nCARNA`;
-    setRawInputText(sample);
-  };
+  const {
+    stage,
+    setStage,
+    mode,
+    setMode,
+    rawInputText,
+    setRawInputText,
+    verifiedResults,
+    failedQueries,
+    calculatedSteps,
+    currentStepIdx,
+    setCurrentStepIdx,
+    showFullTable,
+    setShowFullTable,
+    isProblemConfirmModalOpen,
+    setIsProblemConfirmModalOpen,
+    currentDeskPile,
+    pendingWarnings,
+    handleSurveyorChange,
+    handleVerify,
+    handleSelectCandidate,
+    handleAssignItemToCurrentOrdner,
+    handleAssignAllWarnings,
+    handleSendToTransit,
+    handleSendAllMismatchesToTransit,
+    handleRemoveItem,
+    handleProceedToStepper,
+    handleConfirmModalAndProceed,
+    handleSaveToDesk,
+    handleReset,
+    handleInsertSample,
+  } = useInsertWizard({
+    masterState,
+    excelList,
+    folderList,
+    selectedSurveyor,
+    prefillNames,
+    onSelectSurveyor,
+    onSaveNewMaster,
+    onAddToTransit,
+    onShowToast,
+  });
 
   return (
     <div className="space-y-4">
@@ -408,7 +103,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
       {/* ============================================================ */}
       {stage === 'input' && (
         <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
-          {/* Header & Mode Switch */}
           <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-[#F6F2EB]">
             <div className="flex items-center gap-2">
               <div className="p-2 rounded-xl bg-[#FDF1ED] text-[#D97757]">
@@ -426,7 +120,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               </div>
             </div>
 
-            {/* Segmented Mode Toggle */}
             <div className="flex items-center bg-[#F6F2EB] p-1 rounded-xl text-xs">
               <button
                 onClick={() => setMode('sisip')}
@@ -451,7 +144,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
           </div>
 
-          {/* BANNER NOTIFIKASI MAP TRANSIT JIKA ADA BERKAS TITIPAN */}
+          {/* Transit Tray Notification Banner */}
           {transitState[selectedSurveyor] && transitState[selectedSurveyor].length > 0 && (
             <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3.5 sm:p-4 shadow-xs flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-3">
@@ -470,7 +163,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  const items = transitState[selectedSurveyor];
+                  const items = transitState[selectedSurveyor] ?? [];
                   const names = items.map((x) => x.debitur);
                   const existing = rawInputText.trim();
                   setRawInputText(existing ? `${existing}\n${names.join('\n')}` : names.join('\n'));
@@ -478,7 +171,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                 }}
                 className="px-3.5 py-2 rounded-xl bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-xs font-bold shadow-xs transition-colors shrink-0 cursor-pointer"
               >
-                + Gabungkan {transitState[selectedSurveyor].length} Berkas ke Input
+                Gabungkan {(transitState[selectedSurveyor] ?? []).length} Berkas ke Input
               </button>
             </div>
           )}
@@ -492,7 +185,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               <select
                 value={selectedSurveyor}
                 onChange={(e) => handleSurveyorChange(e.target.value)}
-                className="w-full bg-[#F6F2EB] border border-[#EAE4DC] text-[#2D2824] font-semibold rounded-xl p-2.5 focus:outline-none focus:border-[#D97757]"
+                className="w-full bg-[#F6F2EB] border border-[#EAE4DC] text-[#2D2824] font-semibold rounded-xl p-2.5 focus:outline-hidden focus:border-[#D97757]"
               >
                 {surveyorsList.map((s) => (
                   <option key={s} value={s}>
@@ -538,14 +231,13 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               onChange={(e) => setRawInputText(e.target.value)}
               placeholder="Tempel atau ketik nama debitur di sini (1 nama per baris)...&#10;A SUMARDI&#10;ACAH&#10;ADE SUKANDA"
               rows={6}
-              className="w-full p-3 text-sm font-medium bg-[#F6F2EB] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-none focus:border-[#D97757] focus:bg-[#FFFFFF] transition-all font-mono"
+              className="w-full p-3 text-sm font-medium bg-[#F6F2EB] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-hidden focus:border-[#D97757] focus:bg-[#FFFFFF] transition-all font-mono"
             />
             <p className="text-[11px] text-[#A8A29E]">
-              💡 Tips: Sistem akan otomatis memprioritaskan debitur milik <strong>{selectedSurveyor}</strong> dan memvalidasi jika ada nama ganda.
+              Tips: Sistem akan otomatis memprioritaskan debitur milik <strong>{selectedSurveyor}</strong> dan memvalidasi jika ada nama ganda.
             </p>
           </div>
 
-          {/* Action Button */}
           <button
             onClick={handleVerify}
             className="w-full min-h-[48px] rounded-xl bg-[#D97757] hover:bg-[#C86243] text-white font-bold text-sm flex items-center justify-center gap-2 shadow-xs transition-colors cursor-pointer"
@@ -557,11 +249,10 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
       )}
 
       {/* ============================================================ */}
-      {/* TAHAP 2: VERIFIKASI & RESOLUSI AMBIGUITAS (DISAMBIGUATION)   */}
+      {/* TAHAP 2: VERIFIKASI & RESOLUSI AMBIGUITAS                   */}
       {/* ============================================================ */}
       {stage === 'review' && (
         <div className="space-y-3.5 pb-20 sm:pb-4">
-          {/* Header Bar */}
           <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-4 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
@@ -588,7 +279,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               </div>
             </div>
 
-            {/* Verification Stats Summary */}
             <div className="grid grid-cols-3 gap-2 pt-2 border-t border-[#F6F2EB] text-center text-xs">
               <div className="p-2 rounded-xl bg-[#EEF6F1] text-[#548A70]">
                 <span className="font-extrabold text-sm block">
@@ -608,7 +298,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
               </div>
             </div>
 
-            {/* Quick bulk action if there are warnings */}
             {pendingWarnings.length > 0 && (
               <div className="bg-[#FCF7ED] border border-[#F3E0BD] rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs flex-wrap">
                 <span className="text-[#C48A3F] font-semibold text-[11px]">
@@ -621,7 +310,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                       onClick={handleSendAllMismatchesToTransit}
                       className="px-2.5 py-1 rounded-lg bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
                     >
-                      📥 Sisihkan Semua ke Transit
+                      Sisihkan Semua ke Transit
                     </button>
                   )}
                   <button
@@ -636,7 +325,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             )}
           </div>
 
-          {/* Missing / Failed Queries alert */}
           {failedQueries.length > 0 && (
             <div className="bg-[#FDF2F2] border border-[#F7CDCD] rounded-2xl p-3.5 flex items-start gap-2.5 text-xs text-[#C45E5E]">
               <WarningCircle size={18} weight="bold" className="shrink-0 mt-0.5" />
@@ -649,7 +337,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
           )}
 
-          {/* Verified Items List with Candidate Switchers */}
+          {/* Verified Items List */}
           <div className="space-y-2.5">
             {verifiedResults.map((res, idx) => {
               const ex = res.excel!;
@@ -666,7 +354,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                       : 'border-[#EAE4DC]'
                   }`}
                 >
-                  {/* Top Bar: Input Query vs Matched Debitur */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap text-[11px] mb-0.5">
@@ -694,7 +381,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                     </button>
                   </div>
 
-                  {/* Surveyor badge & warning notification */}
                   <div className="flex items-center justify-between gap-2 flex-wrap text-xs pt-1 border-t border-[#F6F2EB]">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[#79716B] text-[11px]">Surveyor di Excel:</span>
@@ -713,12 +399,11 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
 
                     {res.warningMessage && (
                       <span className="text-[11px] font-semibold text-[#C48A3F] flex items-center gap-1">
-                        ⚠️ {res.warningMessage}
+                        {res.warningMessage}
                       </span>
                     )}
                   </div>
 
-                  {/* Quick Action Button for Warning / Unassigned */}
                   {res.isUnassigned && (
                     <div className="flex items-center justify-between gap-2 p-2 rounded-xl bg-[#FFF5F5] border border-[#F7CDCD] text-xs">
                       <span className="text-[#C45E5E] font-medium text-[11px]">
@@ -729,7 +414,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                         onClick={() => handleAssignItemToCurrentOrdner(idx)}
                         className="px-2.5 py-1 rounded-lg bg-[#548A70] hover:bg-[#43725b] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
                       >
-                        ✓ Tetapkan ke Ordner {selectedSurveyor}
+                        Tetapkan ke Ordner {selectedSurveyor}
                       </button>
                     </div>
                   )}
@@ -745,7 +430,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                           onClick={() => handleSendToTransit(idx)}
                           className="px-2.5 py-1 rounded-lg bg-[#5D7CB0] hover:bg-[#4b6999] text-white text-[11px] font-bold shrink-0 transition-colors cursor-pointer"
                         >
-                          📥 Sisihkan ke Map Transit {getCleanInvestigatorName(ex.surveyor)}
+                          Sisihkan ke Map Transit {getCleanInvestigatorName(ex.surveyor)}
                         </button>
                         <button
                           type="button"
@@ -759,7 +444,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                     </div>
                   )}
 
-                  {/* MULTI-CANDIDATE DISAMBIGUATION (NAMA IDENTIK / GANDA) */}
+                  {/* Multi-Candidate Disambiguation */}
                   {res.candidates.length > 1 && (
                     <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-xl p-2.5 space-y-2 text-xs">
                       <div className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider text-[#79716B]">
@@ -789,15 +474,15 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
                                   <span className="font-semibold text-[#2D2824]">{cand.excel.surveyor || 'Belum Ditugaskan'}</span>
                                   {cand.isExactSurveyor ? (
                                     <span className="bg-[#EEF6F1] text-[#548A70] font-bold px-1.5 py-0.5 rounded text-[9.5px]">
-                                      ✓ Cocok Ordner {selectedSurveyor}
+                                      Cocok Ordner {selectedSurveyor}
                                     </span>
                                   ) : cand.isUnassigned ? (
                                     <span className="bg-[#FDF2F2] text-[#C45E5E] font-bold px-1.5 py-0.5 rounded text-[9.5px]">
-                                      ❌ Belum Ditugaskan di Excel
+                                      Belum Ditugaskan di Excel
                                     </span>
                                   ) : (
                                     <span className="bg-[#FCF7ED] text-[#C48A3F] font-bold px-1.5 py-0.5 rounded text-[9.5px]">
-                                      ⚠️ Milik Ordner {cand.excel.surveyor}
+                                      Milik Ordner {cand.excel.surveyor}
                                     </span>
                                   )}
                                 </div>
@@ -818,7 +503,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             })}
           </div>
 
-          {/* DOCKED THUMB BAR TO PROCEED TO PHYSICAL DESK STEPPER */}
           <div className="fixed bottom-[52px] sm:bottom-4 left-0 right-0 z-30 p-3 bg-[#FFFFFF]/95 backdrop-blur-[2px] border-t border-[#EAE4DC] shadow-lg flex items-center gap-2 max-w-5xl mx-auto px-4 sm:px-6">
             <button
               onClick={() => setStage('input')}
@@ -843,7 +527,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
       {/* ============================================================ */}
       {stage === 'stepper' && calculatedSteps && (
         <div className="space-y-3.5 pb-20 sm:pb-4">
-          {/* Header Controls */}
           <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-3 sm:p-4 flex items-center justify-between gap-2">
             <div>
               <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-[#548A70] block">
@@ -879,74 +562,74 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
           </div>
 
-          {!showFullTable ? (
-            /* CLEAN STEPPER CARD (NO BORDER OVERLOAD) */
-            <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
-              {/* Step indicator */}
-              <div className="flex items-center justify-between">
-                <span className="px-3 py-1 rounded-xl bg-[#FDF1ED] text-[#D97757] font-extrabold text-xs">
-                  Lembar #{calculatedSteps[currentStepIdx].step_no} dari {calculatedSteps.length}
-                </span>
-                <span className="text-xs font-extrabold text-[#548A70] bg-[#EEF6F1] px-2.5 py-1 rounded-xl">
-                  Posisi Baru di Meja: #{calculatedSteps[currentStepIdx].new_pos}
-                </span>
-              </div>
+          {!showFullTable && calculatedSteps[currentStepIdx] ? (
+            (() => {
+              const activeStep = calculatedSteps[currentStepIdx];
+              if (!activeStep) return null;
+              return (
+                <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-3xl p-5 sm:p-6 shadow-sm space-y-5">
+                  <div className="flex items-center justify-between">
+                    <span className="px-3 py-1 rounded-xl bg-[#FDF1ED] text-[#D97757] font-extrabold text-xs">
+                      Lembar #{activeStep.step_no} dari {calculatedSteps.length}
+                    </span>
+                    <span className="text-xs font-extrabold text-[#548A70] bg-[#EEF6F1] px-2.5 py-1 rounded-xl">
+                      Posisi Baru di Meja: #{activeStep.new_pos}
+                    </span>
+                  </div>
 
-              {/* Big Debtor Header */}
-              <div className="text-center py-2">
-                <p className="text-[11px] uppercase font-bold tracking-wider text-[#A8A29E] mb-1">
-                  Ambil Lembar Paling Atas di Tangan:
-                </p>
-                <h3 className="text-2xl sm:text-3xl font-extrabold text-[#2D2824] tracking-tight">
-                  {calculatedSteps[currentStepIdx].debitur}
-                </h3>
-                <p className="text-xs text-[#79716B] mt-1">
-                  Case {calculatedSteps[currentStepIdx].item_data.jenis_case} • #{calculatedSteps[currentStepIdx].item_data.no} • {calculatedSteps[currentStepIdx].item_data.wilayah}
-                </p>
-              </div>
+                  <div className="text-center py-2">
+                    <p className="text-[11px] uppercase font-bold tracking-wider text-[#A8A29E] mb-1">
+                      Ambil Lembar Paling Atas di Tangan:
+                    </p>
+                    <h3 className="text-2xl sm:text-3xl font-extrabold text-[#2D2824] tracking-tight">
+                      {activeStep.debitur}
+                    </h3>
+                    <p className="text-xs text-[#79716B] mt-1">
+                      Case {activeStep.item_data.jenis_case} • #{activeStep.item_data.no} • {activeStep.item_data.wilayah}
+                    </p>
+                  </div>
 
-              {/* Physical Desk Action Prompt */}
-              <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-2xl p-4 sm:p-5 text-center space-y-1.5">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-[#D97757]">
-                  Tindakan di Tumpukan Meja:
-                </span>
-                <p className="text-base sm:text-lg font-bold text-[#2D2824] leading-snug">
-                  {calculatedSteps[currentStepIdx].instruksi}
-                </p>
-              </div>
+                  <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-2xl p-4 sm:p-5 text-center space-y-1.5">
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-[#D97757]">
+                      Tindakan di Tumpukan Meja:
+                    </span>
+                    <p className="text-base sm:text-lg font-bold text-[#2D2824] leading-snug">
+                      {activeStep.instruksi}
+                    </p>
+                  </div>
 
-              {/* Desktop Stepper Buttons */}
-              <div className="hidden sm:flex items-center justify-between gap-3 pt-2">
-                <button
-                  disabled={currentStepIdx === 0}
-                  onClick={() => setCurrentStepIdx((prev) => prev - 1)}
-                  className="px-5 py-3 rounded-xl border border-[#EAE4DC] bg-[#F6F2EB] text-[#2D2824] font-semibold text-xs sm:text-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  <ArrowLeft size={16} weight="bold" />
-                  Sebelumnya
-                </button>
+                  <div className="hidden sm:flex items-center justify-between gap-3 pt-2">
+                    <button
+                      disabled={currentStepIdx === 0}
+                      onClick={() => setCurrentStepIdx((prev) => prev - 1)}
+                      className="px-5 py-3 rounded-xl border border-[#EAE4DC] bg-[#F6F2EB] text-[#2D2824] font-semibold text-xs sm:text-sm flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      <ArrowLeft size={16} weight="bold" />
+                      Sebelumnya
+                    </button>
 
-                {currentStepIdx < calculatedSteps.length - 1 ? (
-                  <button
-                    onClick={() => setCurrentStepIdx((prev) => prev + 1)}
-                    className="flex-1 py-3 rounded-xl bg-[#2D2824] hover:bg-[#3E3834] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    Lanjut Lembar #{currentStepIdx + 2}
-                    <ArrowRight size={16} weight="bold" />
-                  </button>
-                ) : (
-                  <button
-                    onClick={handleSaveToDesk}
-                    className="flex-1 py-3 rounded-xl bg-[#548A70] hover:bg-[#43725b] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors"
-                  >
-                    <CheckCircle size={18} weight="bold" />
-                    Selesai & Simpan ke Meja
-                  </button>
-                )}
-              </div>
-            </div>
+                    {currentStepIdx < calculatedSteps.length - 1 ? (
+                      <button
+                        onClick={() => setCurrentStepIdx((prev) => prev + 1)}
+                        className="flex-1 py-3 rounded-xl bg-[#2D2824] hover:bg-[#3E3834] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        Lanjut Lembar #{currentStepIdx + 2}
+                        <ArrowRight size={16} weight="bold" />
+                      </button>
+                    ) : (
+                      <button
+                        onClick={handleSaveToDesk}
+                        className="flex-1 py-3 rounded-xl bg-[#548A70] hover:bg-[#43725b] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition-colors"
+                      >
+                        <CheckCircle size={18} weight="bold" />
+                        Selesai & Simpan ke Meja
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })()
           ) : (
-            /* FULL TABLE VIEW (Quick Overview) */
             <div className="bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl overflow-hidden shadow-xs">
               <div className="p-3 bg-[#FAF8F5] border-b border-[#EAE4DC] font-bold text-xs text-[#2D2824]">
                 Tabel Rangkuman Langkah Penyisipan
@@ -980,7 +663,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
           )}
 
-          {/* DOCKED / STICKY THUMB-ZONE ACTION BAR (MOBILE ONLY) */}
+          {/* Mobile Sticky Thumb Bar */}
           <div className="sm:hidden fixed bottom-[52px] left-0 right-0 z-30 p-2.5 bg-[#FFFFFF]/95 backdrop-blur-[2px] border-t border-[#EAE4DC] shadow-lg flex items-center gap-2">
             <button
               disabled={currentStepIdx === 0}
@@ -1012,7 +695,7 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
         </div>
       )}
 
-      {/* Problem Confirmation Modal before Stepper */}
+      {/* Problem Confirmation Modal */}
       <ConfirmModal
         isOpen={isProblemConfirmModalOpen}
         title="Konfirmasi Penugasan Berkas"

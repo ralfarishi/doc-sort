@@ -123,6 +123,19 @@ export function matchQuery(
   });
 
   const bestCandidate = candidates[0];
+  if (!bestCandidate) {
+    return {
+      query,
+      found_excel: false,
+      score: 0,
+      excel: null,
+      folders: [],
+      candidates: [],
+      hasAmbiguity: false,
+      surveyorMismatch: false,
+      isUnassigned: false,
+    };
+  }
   const bestMatch = bestCandidate.excel;
   const bestScore = bestCandidate.score;
 
@@ -177,13 +190,15 @@ export function simulateHandInsertion(
 
   for (let i = 0; i < newBatchResults.length; i++) {
     const res = newBatchResults[i];
-    if (!res.excel) continue;
+    if (!res || !res.excel) continue;
     const ex = res.excel;
     const debName = ex.debitur;
     const debNorm = normalize(debName);
 
     let insertIdx = 0;
-    while (insertIdx < deskPile.length && normalize(deskPile[insertIdx].debitur) < debNorm) {
+    while (insertIdx < deskPile.length) {
+      const curItem = deskPile[insertIdx];
+      if (!curItem || normalize(curItem.debitur) >= debNorm) break;
       insertIdx++;
     }
 
@@ -196,16 +211,16 @@ export function simulateHandInsertion(
       instruksi = 'Letakkan di meja sebagai lembar dasar tumpukan pertama.';
       stepType = 'first';
     } else if (insertIdx === 0) {
-      nextDeb = deskPile[0].debitur;
+      nextDeb = deskPile[0]?.debitur ?? '';
       instruksi = `Letakkan di paling atas tumpukan meja (tepat di atas "${nextDeb}").`;
       stepType = 'top';
     } else if (insertIdx === deskPile.length) {
-      prevDeb = deskPile[deskPile.length - 1].debitur;
+      prevDeb = deskPile[deskPile.length - 1]?.debitur ?? '';
       instruksi = `Letakkan di paling bawah tumpukan meja (tepat di bawah "${prevDeb}").`;
       stepType = 'bottom';
     } else {
-      prevDeb = deskPile[insertIdx - 1].debitur;
-      nextDeb = deskPile[insertIdx].debitur;
+      prevDeb = deskPile[insertIdx - 1]?.debitur ?? '';
+      nextDeb = deskPile[insertIdx]?.debitur ?? '';
       instruksi = `Selipkan di antara "${prevDeb}" dan "${nextDeb}".`;
       stepType = 'middle';
     }
@@ -226,8 +241,8 @@ export function simulateHandInsertion(
       visit: ex.visit,
       status_laporan: ex.status_laporan,
       hasil_visit: ex.hasil_visit,
-      files_count: res.folders && res.folders.length > 0 ? res.folders[0].files_count : 0,
-      folder_path: res.folders && res.folders.length > 0 ? res.folders[0].path : '',
+      files_count: res.folders?.[0]?.files_count ?? 0,
+      folder_path: res.folders?.[0]?.path ?? '',
     };
 
     deskPile.splice(insertIdx, 0, newItem);
@@ -247,20 +262,60 @@ export function simulateHandInsertion(
   return { deskPile, steps };
 }
 
-export function searchPhysicalLocation(query: string, masterState: MasterState): SearchPhysicalResult[] {
-  const qNorm = normalize(query);
-  if (!qNorm) return [];
+export type { SearchPhysicalResult };
 
+export interface SearchHandoverResult {
+  sim: number;
+  surveyor: string;
+  item: HandoverItem;
+}
+
+export interface SearchHistoryResult {
+  sim: number;
+  surveyor: string;
+  item: HandoverHistoryItem;
+}
+
+/**
+ * DRY scoring for debtor queries: handles exact ID klaim, '#no', and fuzzy name similarity.
+ */
+export function scoreDebtorMatch(
+  query: string,
+  item: { debitur: string; id_klaim: number | string; no: number | string }
+): number {
+  const trimmed = query.trim();
+  if (String(item.id_klaim) === trimmed || `#${item.no}` === trimmed) {
+    return 1.0;
+  }
+  return nameSimilarity(query, item.debitur, true);
+}
+
+/**
+ * Collects normalized debtor names and 'case#no' composite keys from any organizer states.
+ */
+export function collectHandledDebtorKeys(
+  ...states: (Record<string, { debitur: string; jenis_case: string; no: number | string }[]> | undefined)[]
+): Set<string> {
+  const keys = new Set<string>();
+  for (const state of states) {
+    if (!state) continue;
+    for (const items of Object.values(state)) {
+      for (const it of items) {
+        keys.add(normalize(it.debitur));
+        keys.add(`${it.jenis_case}#${it.no}`);
+      }
+    }
+  }
+  return keys;
+}
+
+export function searchPhysicalLocation(query: string, masterState: MasterState): SearchPhysicalResult[] {
+  if (!normalize(query)) return [];
   const results: SearchPhysicalResult[] = [];
 
   for (const [surveyor, items] of Object.entries(masterState)) {
     items.forEach((it, idx) => {
-      let sim = nameSimilarity(query, it.debitur, true);
-
-      if (String(it.id_klaim) === query.trim() || `#${it.no}` === query.trim()) {
-        sim = 1.0;
-      }
-
+      const sim = scoreDebtorMatch(query, it);
       if (sim >= 0.55) {
         results.push({
           sim,
@@ -268,13 +323,42 @@ export function searchPhysicalLocation(query: string, masterState: MasterState):
           position: idx + 1,
           item: it,
           totalInPile: items.length,
-          prevNeighbor: idx > 0 ? items[idx - 1] : null,
-          nextNeighbor: idx < items.length - 1 ? items[idx + 1] : null,
+          prevNeighbor: idx > 0 ? (items[idx - 1] ?? null) : null,
+          nextNeighbor: idx < items.length - 1 ? (items[idx + 1] ?? null) : null,
         });
       }
     });
   }
+  return results.sort((a, b) => b.sim - a.sim);
+}
 
+export function searchHandoverLocation(query: string, handoverState: HandoverState): SearchHandoverResult[] {
+  if (!normalize(query)) return [];
+  const results: SearchHandoverResult[] = [];
+
+  for (const [surveyor, items] of Object.entries(handoverState)) {
+    items.forEach((it) => {
+      const sim = scoreDebtorMatch(query, it);
+      if (sim >= 0.55) {
+        results.push({ sim, surveyor, item: it });
+      }
+    });
+  }
+  return results.sort((a, b) => b.sim - a.sim);
+}
+
+export function searchHistoryLocation(query: string, historyState: HandoverHistoryState): SearchHistoryResult[] {
+  if (!normalize(query)) return [];
+  const results: SearchHistoryResult[] = [];
+
+  for (const [surveyor, items] of Object.entries(historyState)) {
+    items.forEach((it) => {
+      const sim = scoreDebtorMatch(query, it);
+      if (sim >= 0.55) {
+        results.push({ sim, surveyor, item: it });
+      }
+    });
+  }
   return results.sort((a, b) => b.sim - a.sim);
 }
 
@@ -285,6 +369,17 @@ export interface FullBackupPayload {
   history?: HandoverHistoryState;
   transit?: TransitState;
   handover?: HandoverState;
+}
+
+function triggerJsonDownload(filenamePrefix: string, data: unknown): void {
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
+  const downloadAnchor = document.createElement('a');
+  const date = new Date().toISOString().slice(0, 10);
+  downloadAnchor.setAttribute('href', dataStr);
+  downloadAnchor.setAttribute('download', `${filenamePrefix}_${date}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
 }
 
 export function exportFullBackupToJson(
@@ -301,25 +396,44 @@ export function exportFullBackupToJson(
     transit,
     handover,
   };
-  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(payload, null, 2));
-  const downloadAnchor = document.createElement('a');
-  const date = new Date().toISOString().slice(0, 10);
-  downloadAnchor.setAttribute('href', dataStr);
-  downloadAnchor.setAttribute('download', `organizer_backup_full_${date}.json`);
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
+  triggerJsonDownload('organizer_backup_full', payload);
 }
 
 export function exportStateToJson(state: MasterState): void {
-  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(state, null, 2));
-  const downloadAnchor = document.createElement('a');
-  const date = new Date().toISOString().slice(0, 10);
-  downloadAnchor.setAttribute('href', dataStr);
-  downloadAnchor.setAttribute('download', `tumpukan_master_${date}.json`);
-  document.body.appendChild(downloadAnchor);
-  downloadAnchor.click();
-  downloadAnchor.remove();
+  triggerJsonDownload('tumpukan_master', state);
+}
+
+/** Formats a surveyor's master pile into a Markdown catalog table. */
+export function formatCatalogMarkdown(surveyor: string, items: MasterItem[]): string {
+  let md = `# KATALOG MASTER FISIK: ORDNER ${surveyor}\n\n`;
+  md += `Total Berkas: ${items.length} Dokumen (A–Z)\n\n`;
+  md += `| No. Fisik | Nama Debitur | Case | No. Excel | Wilayah | ID Klaim | Foto | Label Stiker |\n`;
+  md += `|:---:|---|:---:|:---:|---|:---:|:---:|---|\n`;
+
+  items.forEach((it, idx) => {
+    const sticker = `[${surveyor.slice(0, 6)}] ${it.jenis_case} No.${it.no} - ${it.debitur}`;
+    const foto = it.files_count > 0 ? `${it.files_count} file` : 'Belum ada';
+    md += `| **#${idx + 1}** | **${it.debitur}** | ${it.jenis_case} | #${it.no} | ${it.wilayah} | ${it.id_klaim} | ${foto} | \`${sticker}\` |\n`;
+  });
+  return md;
+}
+
+/** Creates a TransitItem from a verified MatchResult if a valid target surveyor exists. */
+export function createTransitItemFromMatch(item: MatchResult, sourceSurveyor: string): TransitItem | null {
+  if (!item.excel) return null;
+  const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
+  if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') {
+    return null;
+  }
+  return {
+    id: createId(),
+    debitur: item.excel.debitur,
+    sourceSurveyor,
+    targetSurveyor: targetSurv,
+    timestamp: new Date().toISOString(),
+    excelRecord: item.excel,
+    folderRecord: item.folders.length > 0 ? item.folders[0] : undefined,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -381,7 +495,7 @@ export function isHandoverHistoryState(value: unknown): value is HandoverHistory
 
 export type SyncScope = 'master' | 'transit' | 'handover' | 'history';
 
-const STORAGE_KEYS: Record<SyncScope, string> = {
+export const STORAGE_KEYS: Record<SyncScope, string> = {
   master: 'ORGANIZER_FISIK_MASTER_STATE_V3',
   transit: 'ORGANIZER_FISIK_TRANSIT_STATE_V1',
   handover: 'ORGANIZER_FISIK_HANDOVER_STATE_V1',
@@ -431,6 +545,7 @@ export async function pushServerSnapshot<T>(scope: SyncScope, state: T): Promise
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state),
+      keepalive: true,
     });
     return res.ok;
   } catch {
@@ -614,6 +729,9 @@ export function returnHandoverItemToMaster(
   }
 
   const itemToReturn = currentHandover[targetIdx];
+  if (!itemToReturn) {
+    return { nextMaster: master, nextHandover: handover };
+  }
   const nextHandoverList = currentHandover.filter((_, idx) => idx !== targetIdx);
 
   const nextHandover: HandoverState = { ...handover };
@@ -627,7 +745,9 @@ export function returnHandoverItemToMaster(
   const pile = [...(master[surveyor] ?? [])];
   const debNorm = normalize(itemToReturn.item_data.debitur);
   let insertIdx = 0;
-  while (insertIdx < pile.length && normalize(pile[insertIdx].debitur) < debNorm) {
+  while (insertIdx < pile.length) {
+    const cur = pile[insertIdx];
+    if (!cur || normalize(cur.debitur) >= debNorm) break;
     insertIdx++;
   }
   pile.splice(insertIdx, 0, itemToReturn.item_data);
@@ -657,129 +777,73 @@ export function clearHandoverList(
 
 /**
  * Finalizes handover items by moving them from active handover tray into persistent history.
+ * If surveyor is omitted or 'ALL', archives ALL active surveyors atomically in one pass.
  */
 export function archiveHandoverToHistory(
   handover: HandoverState,
   history: HandoverHistoryState,
-  surveyor: string,
+  surveyor?: string,
   notes?: string
 ): { nextHandover: HandoverState; nextHistory: HandoverHistoryState; archivedCount: number } {
-  const items = handover[surveyor] ?? [];
-  if (items.length === 0) {
+  const isAll = !surveyor || surveyor === 'ALL';
+  const targetSurveyors = isAll
+    ? Object.keys(handover).filter((s) => (handover[s] ?? []).length > 0)
+    : (handover[surveyor] && handover[surveyor].length > 0 ? [surveyor] : []);
+
+  if (targetSurveyors.length === 0) {
     return { nextHandover: handover, nextHistory: history, archivedCount: 0 };
   }
 
   const timestamp = new Date().toISOString();
-  const newHistoryEntries: HandoverHistoryItem[] = items.map((it) => ({
-    id: it.id || createId(),
-    debitur: it.debitur,
-    no: it.no,
-    id_klaim: it.id_klaim,
-    kota: it.kota,
-    wilayah: it.wilayah,
-    jenis_case: it.jenis_case,
-    surveyor: it.surveyor,
-    handedOverAt: timestamp,
-    notes: notes || 'Diserahkan via web',
-  }));
-
-  const existingHistory = history[surveyor] ?? [];
-  const mergedHistory = [...existingHistory, ...newHistoryEntries].sort((a, b) =>
-    normalize(a.debitur).localeCompare(normalize(b.debitur))
-  );
-
-  const nextHandover = { ...handover };
-  delete nextHandover[surveyor];
-
-  const nextHistory: HandoverHistoryState = {
-    ...history,
-    [surveyor]: mergedHistory,
-  };
-
-  return { nextHandover, nextHistory, archivedCount: newHistoryEntries.length };
-}
-
-/**
- * Restores a single archived item from history back into the active handover tray.
- */
-export function restoreHistoryItemToHandover(
-  history: HandoverHistoryState,
-  handover: HandoverState,
-  surveyor: string,
-  historyId: string
-): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredItem?: HandoverItem } {
-  const currentHistory = history[surveyor] ?? [];
-  const targetIdx = currentHistory.findIndex((h) => h.id === historyId);
-  if (targetIdx === -1) {
-    return { nextHistory: history, nextHandover: handover };
-  }
-
-  const histItem = currentHistory[targetIdx];
-  const nextHistoryList = currentHistory.filter((_, idx) => idx !== targetIdx);
-
+  let totalArchived = 0;
   const nextHistory: HandoverHistoryState = { ...history };
-  if (nextHistoryList.length > 0) {
-    nextHistory[surveyor] = nextHistoryList;
-  } else {
-    delete nextHistory[surveyor];
+  const nextHandover: HandoverState = { ...handover };
+
+  for (const surv of targetSurveyors) {
+    const items = handover[surv] ?? [];
+    if (items.length === 0) continue;
+
+    const newHistoryEntries: HandoverHistoryItem[] = items.map((it) => ({
+      id: it.id || createId(),
+      debitur: it.debitur,
+      no: it.no,
+      id_klaim: it.id_klaim,
+      kota: it.kota,
+      wilayah: it.wilayah,
+      jenis_case: it.jenis_case,
+      surveyor: it.surveyor,
+      handedOverAt: timestamp,
+      notes: notes || 'Diserahkan via web',
+    }));
+
+    const existingHistory = nextHistory[surv] ?? [];
+    nextHistory[surv] = [...existingHistory, ...newHistoryEntries].sort((a, b) =>
+      normalize(a.debitur).localeCompare(normalize(b.debitur))
+    );
+
+    delete nextHandover[surv];
+    totalArchived += newHistoryEntries.length;
   }
 
-  const item_data: MasterItem = {
-    no: histItem.no,
-    id_klaim: histItem.id_klaim,
-    debitur: histItem.debitur,
-    kota: histItem.kota,
-    wilayah: histItem.wilayah,
-    surveyor: histItem.surveyor,
-    visit: '',
-    status_laporan: '',
-    hasil_visit: '',
-    jenis_case: histItem.jenis_case,
-    files_count: 0,
-    folder_path: '',
-  };
-
-  const restoredItem: HandoverItem = {
-    id: histItem.id || createId(),
-    debitur: histItem.debitur,
-    no: histItem.no,
-    id_klaim: histItem.id_klaim,
-    kota: histItem.kota,
-    wilayah: histItem.wilayah,
-    jenis_case: histItem.jenis_case,
-    surveyor: histItem.surveyor,
-    originalPosition: 0,
-    item_data,
-    timestamp: new Date().toISOString(),
-  };
-
-  const existingHandover = handover[surveyor] ?? [];
-  const combined = [...existingHandover, restoredItem].sort((a, b) =>
-    normalize(a.debitur).localeCompare(normalize(b.debitur))
-  );
-
-  const nextHandover: HandoverState = {
-    ...handover,
-    [surveyor]: combined,
-  };
-
-  return { nextHistory, nextHandover, restoredItem };
+  return { nextHandover, nextHistory, archivedCount: totalArchived };
 }
 
-/**
- * Restores all archived items for a surveyor from history back into active handover.
- */
-export function restoreAllHistoryToHandover(
-  history: HandoverHistoryState,
-  handover: HandoverState,
-  surveyor: string
-): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredCount: number } {
-  const currentHistory = history[surveyor] ?? [];
-  if (currentHistory.length === 0) {
-    return { nextHistory: history, nextHandover: handover, restoredCount: 0 };
+function buildHistoryLookupSet(history: HandoverHistoryState): Set<string> {
+  const set = new Set<string>();
+  for (const [surv, items] of Object.entries(history || {})) {
+    if (!Array.isArray(items)) continue;
+    for (const it of items) {
+      if (it.id) set.add(it.id);
+      if (it.debitur) {
+        set.add(`${normalize(surv)}#${normalize(it.debitur)}#${it.jenis_case || ''}`);
+      }
+    }
   }
+  return set;
+}
 
-  const restoredItems: HandoverItem[] = currentHistory.map((histItem) => ({
+function historyItemToHandoverItem(histItem: HandoverHistoryItem): HandoverItem {
+  return {
     id: histItem.id || createId(),
     debitur: histItem.debitur,
     no: histItem.no,
@@ -804,8 +868,95 @@ export function restoreAllHistoryToHandover(
       folder_path: '',
     },
     timestamp: new Date().toISOString(),
-  }));
+  };
+}
 
+/**
+ * Ensures handover state contains no ghost items that have already been archived in history,
+ * and prunes any empty surveyor keys.
+ */
+export function reconcileHandoverWithHistory(
+  handover: HandoverState,
+  history: HandoverHistoryState
+): HandoverState {
+  if (!handover || typeof handover !== 'object') return {};
+
+  const historyKeySet = buildHistoryLookupSet(history);
+  let changed = false;
+  const next: HandoverState = {};
+
+  for (const [surv, items] of Object.entries(handover)) {
+    if (!Array.isArray(items) || items.length === 0) {
+      changed = true;
+      continue;
+    }
+
+    const filtered = items.filter((it) => {
+      if (it.id && historyKeySet.has(it.id)) return false;
+      const dedupeKey = `${normalize(surv)}#${normalize(it.debitur)}#${it.jenis_case || ''}`;
+      return !historyKeySet.has(dedupeKey);
+    });
+
+    if (filtered.length !== items.length) {
+      changed = true;
+    }
+
+    if (filtered.length > 0) {
+      next[surv] = filtered;
+    }
+  }
+
+  return changed ? next : handover;
+}
+
+/**
+ * Restores a single archived item from history back into the active handover tray.
+ */
+export function restoreHistoryItemToHandover(
+  history: HandoverHistoryState,
+  handover: HandoverState,
+  surveyor: string,
+  historyId: string
+): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredItem?: HandoverItem } {
+  const currentHistory = history[surveyor] ?? [];
+  const targetIdx = currentHistory.findIndex((h) => h.id === historyId);
+  const histItem = targetIdx !== -1 ? currentHistory[targetIdx] : undefined;
+  if (!histItem) {
+    return { nextHistory: history, nextHandover: handover };
+  }
+
+  const nextHistoryList = currentHistory.filter((_, idx) => idx !== targetIdx);
+  const nextHistory: HandoverHistoryState = { ...history };
+  if (nextHistoryList.length > 0) nextHistory[surveyor] = nextHistoryList;
+  else delete nextHistory[surveyor];
+
+  const restoredItem = historyItemToHandoverItem(histItem);
+  const existingHandover = handover[surveyor] ?? [];
+  const combined = [...existingHandover, restoredItem].sort((a, b) =>
+    normalize(a.debitur).localeCompare(normalize(b.debitur))
+  );
+
+  return {
+    nextHistory,
+    nextHandover: { ...handover, [surveyor]: combined },
+    restoredItem,
+  };
+}
+
+/**
+ * Restores all archived items for a surveyor from history back into active handover.
+ */
+export function restoreAllHistoryToHandover(
+  history: HandoverHistoryState,
+  handover: HandoverState,
+  surveyor: string
+): { nextHistory: HandoverHistoryState; nextHandover: HandoverState; restoredCount: number } {
+  const currentHistory = history[surveyor] ?? [];
+  if (currentHistory.length === 0) {
+    return { nextHistory: history, nextHandover: handover, restoredCount: 0 };
+  }
+
+  const restoredItems = currentHistory.map(historyItemToHandoverItem);
   const nextHistory = { ...history };
   delete nextHistory[surveyor];
 
@@ -814,12 +965,72 @@ export function restoreAllHistoryToHandover(
     normalize(a.debitur).localeCompare(normalize(b.debitur))
   );
 
-  const nextHandover: HandoverState = {
-    ...handover,
-    [surveyor]: combined,
+  return {
+    nextHistory,
+    nextHandover: { ...handover, [surveyor]: combined },
+    restoredCount: restoredItems.length,
   };
+}
 
-  return { nextHistory, nextHandover, restoredCount: restoredItems.length };
+export interface IntegrityReport {
+  isValid: boolean;
+  violations: string[];
+  totalMasterDocs: number;
+  totalHandoverDocs: number;
+  totalHistoryDocs: number;
+}
+
+/**
+ * Validates invariant rules across physical piles, handover tray, and history:
+ *  1. No document in handover may simultaneously exist in history.
+ *  2. Master items must have non-negative numbers and valid non-empty debtors.
+ *  3. Invariant check is deterministic, pure, and safe to run continuously.
+ */
+export function validateDataIntegrity(
+  master: MasterState,
+  handover: HandoverState,
+  history: HandoverHistoryState
+): IntegrityReport {
+  const violations: string[] = [];
+  let totalMaster = 0;
+  let totalHandover = 0;
+  let totalHistory = 0;
+
+  for (const items of Object.values(history || {})) {
+    if (Array.isArray(items)) totalHistory += items.length;
+  }
+  const historyLookup = buildHistoryLookupSet(history);
+
+  for (const [surv, items] of Object.entries(handover || {})) {
+    if (!Array.isArray(items)) continue;
+    totalHandover += items.length;
+    for (const it of items) {
+      const matchById = it.id && historyLookup.has(it.id);
+      const matchByComposite = historyLookup.has(`${normalize(surv)}#${normalize(it.debitur)}#${it.jenis_case || ''}`);
+      if (matchById || matchByComposite) {
+        violations.push(`Ghost Document Detected: "${it.debitur}" (${surv}) ada di antrean ambil sekaligus sudah di riwayat.`);
+      }
+    }
+  }
+
+  for (const [surv, items] of Object.entries(master || {})) {
+    if (!Array.isArray(items)) continue;
+    totalMaster += items.length;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it || !it.debitur || !it.debitur.trim()) {
+        violations.push(`Invalid Master Item: Berkas kosong di ordner "${surv}" posisi #${i + 1}.`);
+      }
+    }
+  }
+
+  return {
+    isValid: violations.length === 0,
+    violations,
+    totalMasterDocs: totalMaster,
+    totalHandoverDocs: totalHandover,
+    totalHistoryDocs: totalHistory,
+  };
 }
 
 

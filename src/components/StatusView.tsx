@@ -238,9 +238,9 @@ export const StatusView: React.FC<StatusViewProps> = ({
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
-                    {Boolean(transitState[inv] && transitState[inv].length > 0) && (
+                    {Boolean((transitState[inv] ?? []).length > 0) && (
                       <span className="px-2 py-0.5 rounded-lg bg-[#EEF3FA] text-[#5D7CB0] text-[11px] font-bold">
-                        +{transitState[inv].length} di Transit
+                        +{(transitState[inv] ?? []).length} di Transit
                       </span>
                     )}
                     {statusBadge}
@@ -343,24 +343,28 @@ export const StatusView: React.FC<StatusViewProps> = ({
             </div>
 
             {/* Transit Section if any */}
-            {Boolean(transitState[activeDetailData.inv] && transitState[activeDetailData.inv].length > 0) && (
-              <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3 space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#5D7CB0] uppercase tracking-wider">
-                    📥 Di Map Transit Meja ({transitState[activeDetailData.inv].length} berkas)
-                  </span>
-                  <span className="text-[10px] text-[#5D7CB0]">Titipan Penyortiran</span>
+            {(() => {
+              const activeTransitList = transitState[activeDetailData.inv] ?? [];
+              if (activeTransitList.length === 0) return null;
+              return (
+                <div className="bg-[#EEF3FA] border border-[#D5E1F2] rounded-2xl p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#5D7CB0] uppercase tracking-wider">
+                      📥 Di Map Transit Meja ({activeTransitList.length} berkas)
+                    </span>
+                    <span className="text-[10px] text-[#5D7CB0]">Titipan Penyortiran</span>
+                  </div>
+                  <div className="divide-y divide-[#E1EAF7] text-xs">
+                    {activeTransitList.map((t) => (
+                      <div key={t.id} className="py-1.5 flex items-center justify-between gap-2">
+                        <span className="font-bold text-[#2D2824] truncate">{t.debitur}</span>
+                        <span className="text-[10px] text-[#79716B] shrink-0">dari ordner {t.sourceSurveyor}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <div className="divide-y divide-[#E1EAF7] text-xs">
-                  {transitState[activeDetailData.inv].map((t) => (
-                    <div key={t.id} className="py-1.5 flex items-center justify-between gap-2">
-                      <span className="font-bold text-[#2D2824] truncate">{t.debitur}</span>
-                      <span className="text-[10px] text-[#79716B] shrink-0">dari ordner {t.sourceSurveyor}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* Search filter inside sheet */}
             {activeDetailData.missingRecords.length > 5 && (

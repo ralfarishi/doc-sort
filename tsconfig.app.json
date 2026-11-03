@@ -17,6 +17,10 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Strict Type-Checking */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+
     /* Linting */
     "noUnusedLocals": true,
     "noUnusedParameters": true,
