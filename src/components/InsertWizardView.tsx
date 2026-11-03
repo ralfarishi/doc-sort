@@ -69,7 +69,6 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
     setShowFullTable,
     isProblemConfirmModalOpen,
     setIsProblemConfirmModalOpen,
-    currentDeskPile,
     pendingWarnings,
     handleSurveyorChange,
     handleVerify,
@@ -177,49 +176,38 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
           )}
 
           {/* Target Ordner Selector */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 text-xs">
-            <div>
-              <label className="block font-bold text-[#79716B] uppercase tracking-wider mb-1">
-                Target Ordner Investigator:
-              </label>
-              <select
-                value={selectedSurveyor}
-                onChange={(e) => handleSurveyorChange(e.target.value)}
-                className="w-full bg-[#F6F2EB] border border-[#EAE4DC] text-[#2D2824] font-semibold rounded-xl p-2.5 focus:outline-hidden focus:border-[#D97757]"
-              >
-                {surveyorsList.map((s) => (
-                  <option key={s} value={s}>
-                    {s} ({masterState[s]?.length || 0} berkas di meja)
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="bg-[#FAF8F5] border border-[#EAE4DC] rounded-xl p-2.5 flex flex-col justify-center">
-              <span className="text-[#A8A29E] font-medium text-[11px]">Tumpukan Fisik Meja Saat Ini:</span>
-              <p className="font-bold text-[#2D2824] text-sm mt-0.5">
-                {currentDeskPile.length} Berkas Terdata
-              </p>
-            </div>
+          <div className="space-y-1.5 text-xs">
+            <label htmlFor="target-ordner" className="block font-bold text-[#79716B] uppercase tracking-wider">
+              Target Ordner
+            </label>
+            <select
+              id="target-ordner"
+              value={selectedSurveyor}
+              onChange={(e) => handleSurveyorChange(e.target.value)}
+              className="w-full bg-[#F6F2EB] border border-[#EAE4DC] text-[#2D2824] text-sm font-semibold rounded-xl p-2.5 focus:outline-hidden focus:border-[#D97757]"
+            >
+              {surveyorsList.map((s) => (
+                <option key={s} value={s}>
+                  {s} ({masterState[s]?.length || 0} berkas di meja)
+                </option>
+              ))}
+            </select>
           </div>
 
           {/* Input Textarea */}
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <label className="font-bold text-[#79716B] uppercase tracking-wider">
-                Nama Debitur di Tangan:
+              <label htmlFor="debtor-input" className="font-bold text-[#79716B] uppercase tracking-wider">
+                Nama Debitur di Tangan
               </label>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleInsertSample}
-                  className="text-[#D97757] hover:underline font-semibold"
-                >
-                  Contoh Format
+              <div className="flex items-center gap-3">
+                <button onClick={handleInsertSample} className="text-[#D97757] hover:underline font-semibold">
+                  Contoh
                 </button>
-                <span>•</span>
                 <button
                   onClick={() => setRawInputText('')}
-                  className="text-[#79716B] hover:text-[#C45E5E]"
+                  disabled={!rawInputText}
+                  className="text-[#79716B] hover:text-[#C45E5E] disabled:opacity-40 disabled:hover:text-[#79716B]"
                 >
                   Hapus
                 </button>
@@ -227,14 +215,15 @@ export const InsertWizardView: React.FC<InsertWizardViewProps> = ({
             </div>
 
             <textarea
+              id="debtor-input"
               value={rawInputText}
               onChange={(e) => setRawInputText(e.target.value)}
-              placeholder="Tempel atau ketik nama debitur di sini (1 nama per baris)...&#10;A SUMARDI&#10;ACAH&#10;ADE SUKANDA"
+              placeholder="Tempel atau ketik satu nama per baris"
               rows={6}
-              className="w-full p-3 text-sm font-medium bg-[#F6F2EB] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-hidden focus:border-[#D97757] focus:bg-[#FFFFFF] transition-all font-mono"
+              className="w-full p-3 text-sm font-medium bg-[#FFFFFF] border border-[#EAE4DC] rounded-xl text-[#2D2824] placeholder:text-[#A8A29E] focus:outline-hidden focus:border-[#D97757] transition-colors"
             />
             <p className="text-[11px] text-[#A8A29E]">
-              Tips: Sistem akan otomatis memprioritaskan debitur milik <strong>{selectedSurveyor}</strong> dan memvalidasi jika ada nama ganda.
+              {rawInputText.split(/\r?\n/).filter((l) => l.trim()).length} nama • Prioritas pencocokan: {selectedSurveyor}
             </p>
           </div>
 

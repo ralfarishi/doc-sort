@@ -24,6 +24,7 @@ import {
   matchQuery,
   normalize,
   getCleanInvestigatorName,
+  isKnownSurveyor,
 } from '../utils/logic';
 
 interface SearchViewProps {
@@ -33,6 +34,7 @@ interface SearchViewProps {
   excelList: ExcelRecord[];
   folderList: FolderRecord[];
   activeSurveyor: string;
+  surveyorsList: string[];
   onQuickInsertItem: (surveyor: string, excelItem: ExcelRecord, folderItem?: FolderRecord) => void;
   onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
   onShowToast?: (type: 'success' | 'warning' | 'error' | 'info', message: string, desc?: string) => void;
@@ -47,12 +49,15 @@ export const SearchView: React.FC<SearchViewProps> = ({
   excelList,
   folderList,
   activeSurveyor,
+  surveyorsList,
   onQuickInsertItem,
   onTakeForHandover,
   onShowToast,
 }) => {
   const [query, setQuery] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
+  // Manual investigator choice for Excel rows that have no assignee yet (keyed by case#no).
+  const [assignTargets, setAssignTargets] = useState<Record<string, string>>({});
 
   // Search Results per Scope
   const physicalResults = useMemo(
@@ -83,7 +88,7 @@ export const SearchView: React.FC<SearchViewProps> = ({
           qNorm.includes(exNorm) ||
           String(ex.id_klaim) === query.trim() ||
           `#${ex.no}` === query.trim();
-        return match && !handledKeys.has(exNorm) && !handledKeys.has(`${ex.jenis_case}#${ex.no}`);
+        return match && !handledKeys.has(`${ex.jenis_case}#${ex.no}`);
       })
       .slice(0, 15);
   }, [query, masterState, handoverState, historyState, excelList]);
@@ -357,7 +362,12 @@ export const SearchView: React.FC<SearchViewProps> = ({
 
               <div className="grid gap-2.5">
                 {excelResults.map((ex, i) => {
-                  const cleanSurv = getCleanInvestigatorName(ex.surveyor);
+                  const excelSurv = getCleanInvestigatorName(ex.surveyor);
+                  const needsAssignment = !isKnownSurveyor(excelSurv);
+                  const rowKey = `${ex.jenis_case}#${ex.no}`;
+                  const cleanSurv = needsAssignment
+                    ? assignTargets[rowKey] ?? (isKnownSurveyor(activeSurveyor) ? activeSurveyor : surveyorsList[0] ?? '')
+                    : excelSurv;
                   return (
                     <div
                       key={`ex-${i}-${ex.debitur}`}
@@ -370,23 +380,40 @@ export const SearchView: React.FC<SearchViewProps> = ({
                           </span>
                           <span>Case {ex.jenis_case} #{ex.no}</span>
                           <span>•</span>
-                          <span>Target: {cleanSurv}</span>
+                          <span>{needsAssignment ? 'Belum ditugaskan di Excel' : `Target: ${excelSurv}`}</span>
                         </div>
                         <h3 className="text-sm font-bold text-[#2D2824] truncate">{ex.debitur}</h3>
                         <p className="text-[11px] text-[#79716B] mt-0.5">{ex.kota} • Visit: {ex.visit}</p>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          const match = matchQuery(ex.debitur, [ex], folderList);
-                          const matchedFolder = match && match.folders.length > 0 ? match.folders[0] : undefined;
-                          onQuickInsertItem(cleanSurv, ex, matchedFolder);
-                        }}
-                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FDF1ED] hover:bg-[#F7D0C4] text-[#D97757] text-xs font-semibold transition-colors shrink-0"
-                      >
-                        <PlusCircle size={15} weight="bold" />
-                        <span>Sisipkan ke {cleanSurv}</span>
-                      </button>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {needsAssignment && (
+                          <select
+                            value={cleanSurv}
+                            onChange={(e) => setAssignTargets((prev) => ({ ...prev, [rowKey]: e.target.value }))}
+                            aria-label={`Pilih investigator untuk ${ex.debitur}`}
+                            className="px-2 py-1.5 rounded-xl bg-[#F6F2EB] border border-[#EAE4DC] text-xs font-semibold text-[#2D2824] focus:outline-hidden focus:border-[#D97757]"
+                          >
+                            {surveyorsList.map((s) => (
+                              <option key={s} value={s}>
+                                {s}
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                        <button
+                          disabled={!isKnownSurveyor(cleanSurv)}
+                          onClick={() => {
+                            const match = matchQuery(ex.debitur, [ex], folderList);
+                            const matchedFolder = match && match.folders.length > 0 ? match.folders[0] : undefined;
+                            onQuickInsertItem(cleanSurv, ex, matchedFolder);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#FDF1ED] hover:bg-[#F7D0C4] text-[#D97757] text-xs font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          <PlusCircle size={15} weight="bold" />
+                          <span>Sisipkan ke {cleanSurv}</span>
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

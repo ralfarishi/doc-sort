@@ -9,6 +9,11 @@ export function normalize(text: string | number | null | undefined): string {
   return String(text).toUpperCase().replace(/[^A-Z0-9]/g, '');
 }
 
+/** True when a (cleaned) surveyor name refers to a real investigator, not a placeholder bucket. */
+export function isKnownSurveyor(cleanName: string | null | undefined): boolean {
+  return Boolean(cleanName) && cleanName !== 'TIDAK TERIDENTIFIKASI' && cleanName !== 'BELUM DITUGASKAN';
+}
+
 export function getCleanInvestigatorName(rawName: string | null | undefined): string {
   if (!rawName) return 'TIDAK TERIDENTIFIKASI';
   const name = String(rawName).trim().toUpperCase();
@@ -291,7 +296,8 @@ export function scoreDebtorMatch(
 }
 
 /**
- * Collects normalized debtor names and 'case#no' composite keys from any organizer states.
+ * Collects 'case#no' composite keys from any organizer states. Names are deliberately
+ * excluded: different debtors (and different cases) can share the same name.
  */
 export function collectHandledDebtorKeys(
   ...states: (Record<string, { debitur: string; jenis_case: string; no: number | string }[]> | undefined)[]
@@ -301,7 +307,6 @@ export function collectHandledDebtorKeys(
     if (!state) continue;
     for (const items of Object.values(state)) {
       for (const it of items) {
-        keys.add(normalize(it.debitur));
         keys.add(`${it.jenis_case}#${it.no}`);
       }
     }
@@ -422,7 +427,7 @@ export function formatCatalogMarkdown(surveyor: string, items: MasterItem[]): st
 export function createTransitItemFromMatch(item: MatchResult, sourceSurveyor: string): TransitItem | null {
   if (!item.excel) return null;
   const targetSurv = getCleanInvestigatorName(item.excel.surveyor);
-  if (!targetSurv || targetSurv === 'TIDAK TERIDENTIFIKASI' || targetSurv === 'BELUM DITUGASKAN') {
+  if (!isKnownSurveyor(targetSurv)) {
     return null;
   }
   return {

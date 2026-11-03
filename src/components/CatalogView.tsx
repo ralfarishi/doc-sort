@@ -37,6 +37,39 @@ interface CatalogViewProps {
   onTakeForHandover?: (surveyor: string, itemKeys: Set<string>) => void;
 }
 
+interface FilterChipRowProps {
+  label: string;
+  allLabel: string;
+  options: string[];
+  value: string;
+  onChange: (value: string) => void;
+  format?: (value: string) => string;
+}
+
+/** One labeled, horizontally scrollable row of single-select filter chips. */
+const FilterChipRow: React.FC<FilterChipRowProps> = ({ label, allLabel, options, value, onChange, format = (v) => v }) => {
+  const chip = (id: string, text: string) => (
+    <button
+      key={id}
+      onClick={() => onChange(id)}
+      className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
+        value === id ? 'bg-[#2D2824] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+      }`}
+    >
+      {text}
+    </button>
+  );
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span className="w-14 shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#A8A29E]">{label}</span>
+      <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+        {chip('ALL', allLabel)}
+        {options.map((o) => chip(o, format(o)))}
+      </div>
+    </div>
+  );
+};
+
 const getUniqueSorted = (items: MasterItem[], field: 'jenis_case' | 'wilayah'): string[] =>
   Array.from(new Set(items.map((it) => it[field]).filter(Boolean))).sort();
 
@@ -257,49 +290,10 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           )}
         </div>
 
-        {/* Horizontal Scrolling Filter Chips */}
-        <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-xs">
-          <button
-            onClick={() => setCaseFilter('ALL')}
-            className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-              caseFilter === 'ALL' ? 'bg-[#2D2824] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
-            }`}
-          >
-            Semua Case
-          </button>
-          {availableCases.map((c) => (
-            <button
-              key={c}
-              onClick={() => setCaseFilter(c)}
-              className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-                caseFilter === c ? 'bg-[#D97757] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
-              }`}
-            >
-              Case {c}
-            </button>
-          ))}
-
-          <span className="w-px h-4 bg-[#EAE4DC] shrink-0 mx-0.5" />
-
-          <button
-            onClick={() => setWilayahFilter('ALL')}
-            className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-              wilayahFilter === 'ALL' ? 'bg-[#2D2824] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
-            }`}
-          >
-            Semua Wilayah
-          </button>
-          {availableWilayah.map((w) => (
-            <button
-              key={w}
-              onClick={() => setWilayahFilter(w)}
-              className={`px-2.5 py-1 rounded-lg font-semibold shrink-0 transition-colors ${
-                wilayahFilter === w ? 'bg-[#5D7CB0] text-white' : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
-              }`}
-            >
-              {w}
-            </button>
-          ))}
+        {/* Filter Chips (one labeled row per dimension) */}
+        <div className="space-y-1.5">
+          <FilterChipRow label="Case" allLabel="Semua" options={availableCases} value={caseFilter} onChange={setCaseFilter} format={(v) => `Case ${v}`} />
+          <FilterChipRow label="Wilayah" allLabel="Semua" options={availableWilayah} value={wilayahFilter} onChange={setWilayahFilter} />
         </div>
       </div>
 
@@ -344,17 +338,12 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       <h3 className="font-bold text-xs sm:text-sm text-[#2D2824] truncate leading-tight">
                         {it.debitur}
                       </h3>
-                      <div className="flex items-center gap-1.5 text-[11px] text-[#79716B] mt-0.5">
-                        <span className="font-semibold text-[#D97757]">
-                          Case {it.jenis_case} #{it.no}
-                        </span>
-                        <span>•</span>
-                        <span className="truncate">{it.wilayah}</span>
-                        <span>•</span>
-                        <span className="text-[#548A70] font-semibold shrink-0">
-                          {it.files_count > 0 ? `${it.files_count} foto` : '0 foto'}
-                        </span>
-                      </div>
+                      <p className="text-[11px] text-[#79716B] mt-0.5 truncate">
+                        <span className="font-semibold text-[#D97757]">Case {it.jenis_case} #{it.no}</span>
+                        {[it.wilayah, it.files_count > 0 ? `${it.files_count} foto` : '']
+                          .filter(Boolean)
+                          .map((part) => ` · ${part}`)}
+                      </p>
                     </div>
                   </div>
 
@@ -371,6 +360,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                         }}
                         className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#FDF1ED] text-[#79716B] hover:text-[#D97757] transition-colors"
                         title="Ambil berkas ini untuk diserahkan"
+                        aria-label={`Ambil ${it.debitur} untuk diserahkan`}
                       >
                         <ArrowSquareOut size={16} />
                       </button>
@@ -383,6 +373,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
                       }}
                       className="p-2 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] text-[#2D2824] transition-colors"
                       title={`Salin Stiker: ${sticker}`}
+                      aria-label={`Salin stiker ${it.debitur}`}
                     >
                       <Copy size={16} />
                     </button>

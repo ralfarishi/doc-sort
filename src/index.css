@@ -95,3 +95,12 @@ body {
     font-weight: 600 !important;
   }
 }
+
+/* Hide scrollbar while keeping scroll (chip rows) */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -191,9 +191,9 @@ test('DRY Best Practice: scoreDebtorMatch and collectHandledDebtorKeys unify mat
   const stateB = { 'S2': [{ debitur: 'B', jenis_case: '410', no: 2 }] };
   const keys = collectHandledDebtorKeys(stateA, stateB, undefined);
 
-  assert.ok(keys.has('A'));
+  assert.strictEqual(keys.has('A'), false); // names never dedupe: same-name debtors in other cases stay visible
   assert.ok(keys.has('410#1'));
-  assert.ok(keys.has('B'));
+  assert.strictEqual(keys.has('B'), false);
   assert.ok(keys.has('410#2'));
   assert.strictEqual(keys.has('C'), false);
 

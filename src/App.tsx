@@ -25,6 +25,7 @@ import {
   validateDataIntegrity,
   simulateHandInsertion,
   getCleanInvestigatorName,
+  isKnownSurveyor,
   STORAGE_KEYS,
 } from './utils/logic';
 import { useCloudSyncedState } from './hooks/useCloudSyncedState';
@@ -170,6 +171,10 @@ export function App() {
     folderItem?: FolderRecord
   ) => {
     const cleanSurv = getCleanInvestigatorName(surveyor);
+    if (!isKnownSurveyor(cleanSurv)) {
+      showToast('error', 'Investigator Belum Dipilih', `${excelItem.debitur} belum bisa disisipkan tanpa investigator.`);
+      return;
+    }
     const currentPile = masterState[cleanSurv] || [];
 
     const pseudoResult: MatchResult = {
@@ -273,7 +278,7 @@ export function App() {
       />
 
       {/* Main Content Area */}
-      <main className="flex-1 max-w-5xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6 pb-24 md:pb-10">
+      <main className="flex-1 max-w-5xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10">
         {activeTab === 'search' && (
           <SearchView
             masterState={masterState}
@@ -282,6 +287,7 @@ export function App() {
             excelList={excelRecords}
             folderList={folderRecords}
             activeSurveyor={activeSurveyor}
+            surveyorsList={surveyorsList}
             onQuickInsertItem={handleQuickInsertItem}
             onTakeForHandover={handleTakeItemsForHandover}
             onShowToast={showToast}

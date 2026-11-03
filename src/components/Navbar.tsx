@@ -50,12 +50,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       <header className="print:hidden sticky top-0 z-40 bg-[#FFFFFF] border-b border-[#EAE4DC] px-3.5 py-2 sm:px-6 sm:py-2.5">
         <div className="max-w-5xl mx-auto flex items-center justify-between gap-2.5 sm:gap-3">
           {/* Logo & Subtitle */}
-          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+          <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
             <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-[#FDF1ED] border border-[#F7D0C4] flex items-center justify-center text-[#D97757] shrink-0">
               <FolderSimple size={18} weight="fill" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-xs sm:text-base font-bold tracking-tight text-[#2D2824] leading-tight truncate">
+              <h1 className="text-xs sm:text-base font-bold tracking-tight text-[#2D2824] leading-tight whitespace-nowrap">
                 Organizer Fisik
               </h1>
               <p className="text-[10px] sm:text-[11px] text-[#79716B] leading-none mt-0.5 truncate">
@@ -66,7 +66,7 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
 
           {/* Desktop/Tablet Tab Navigation */}
-          <nav className="hidden md:flex items-center gap-1 bg-[#F6F2EB] p-1 rounded-xl border border-[#EAE4DC]">
+          <nav className="hidden lg:flex items-center gap-0.5 bg-[#F6F2EB] p-1 rounded-xl border border-[#EAE4DC] shrink-0">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               const isActive = activeTab === tab.id;
@@ -74,14 +74,14 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <button
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all relative ${
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all relative ${
                     isActive
                       ? 'bg-[#FFFFFF] text-[#D97757] shadow-xs border border-[#EAE4DC]'
                       : 'text-[#79716B] hover:text-[#2D2824]'
                   }`}
                 >
                   <Icon size={16} weight={isActive ? 'bold' : 'regular'} />
-                  <span>{tab.label}</span>
+                  <span title={tab.label}>{tab.shortLabel}</span>
                   {Boolean(tab.badge && tab.badge > 0) && (
                     <span className="px-1.5 py-0.5 rounded-full bg-[#5D7CB0] text-white text-[10px] font-bold leading-none">
                       {tab.badge}
@@ -108,7 +108,7 @@ export const Navbar: React.FC<NavbarProps> = ({
       </header>
 
       {/* Mobile Bottom Navigation Bar (Modern 2026 Thumb Ergonomics) */}
-      <nav className="print:hidden md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-2 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-lg">
+      <nav className="print:hidden lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#FFFFFF] border-t border-[#EAE4DC] px-2 pt-1.5 pb-[max(0.6rem,env(safe-area-inset-bottom))] shadow-lg">
         <div className="grid grid-cols-5 gap-1">
           {tabs.map((tab) => {
             const Icon = tab.icon;
