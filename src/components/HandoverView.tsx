@@ -91,11 +91,11 @@ const HandoverRecordTable: React.FC<HandoverRecordTableProps> = ({
         ) : showSurveyor ? (
           <colgroup>
             <col className="w-12 print:w-10" style={{ width: '42px' }} />
-            <col style={{ width: '32%' }} />
+            <col style={{ width: '35%' }} />
             <col style={{ width: '22%' }} />
-            <col style={{ width: '18%' }} />
-            <col style={{ width: '14%' }} />
-            <col style={{ width: '14%' }} />
+            <col style={{ width: '23%' }} />
+            <col style={{ width: '20%' }} />
+            <col className="print:hidden" style={{ width: '14%' }} />
             <col className="w-20 print:hidden" style={{ width: '70px' }} />
           </colgroup>
         ) : null}
@@ -107,7 +107,7 @@ const HandoverRecordTable: React.FC<HandoverRecordTableProps> = ({
             {showSurveyor && <th className="py-2.5 px-3 text-left">Investigator</th>}
             <th className="py-2.5 px-3 text-left">Wilayah</th>
             <th className="py-2.5 px-3 text-center">Jenis Case</th>
-            {!isPending && <th className="py-2.5 px-3 text-left">Keterangan / Verifikasi</th>}
+            {!isPending && <th className="py-2.5 px-3 text-left print:hidden">Keterangan / Verifikasi</th>}
             <th className="py-2.5 px-3 text-center print:hidden">Aksi</th>
           </tr>
         </thead>
@@ -144,7 +144,7 @@ const HandoverRecordTable: React.FC<HandoverRecordTableProps> = ({
                 </span>
               </td>
               {!isPending && (
-                <td className="py-2 px-3 text-xs text-[#79716B] print:text-black print:text-[11px]">
+                <td className="py-2 px-3 text-xs text-[#79716B] print:hidden">
                   <span className="truncate block max-w-xs" title={it.notes || ''}>
                     {it.notes || 'Diserahkan via web'}
                   </span>
@@ -254,15 +254,8 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
       <div className="print:hidden bg-[#FFFFFF] border border-[#EAE4DC] rounded-2xl p-4 sm:p-5 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#D97757]" />
-              <h2 className="text-base sm:text-lg font-bold text-[#2D2824]">
-                Daftar Dokumen Diambil & Riwayat
-              </h2>
-            </div>
-            <p className="text-xs text-[#79716B] mt-1">
-              Kelola dokumen yang ditarik dari meja untuk diserahkan, dicetak, serta arsip yang telah diserahkan.
-            </p>
+            <h2 className="text-base sm:text-lg font-bold text-[#2D2824]">Berkas Diambil</h2>
+            <p className="text-xs text-[#79716B] mt-0.5">Antrean cetak dan riwayat berkas yang sudah diserahkan.</p>
           </div>
 
           {/* Action Buttons */}
@@ -369,98 +362,78 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
           </button>
         </div>
 
-        {/* Filter Toolbar */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-            <button
-              onClick={() => setSelectedSurveyorFilter('ALL')}
-              className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
-                selectedSurveyorFilter === 'ALL'
-                  ? 'bg-[#2D2824] text-white'
-                  : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
-              }`}
-            >
-              Semua Investigator ({activeSubTab === 'pending' ? totalHandoverCount : totalHistoryCount})
-            </button>
-            {(activeSubTab === 'pending' ? activeHandoverSurveyors : historySurveyors).map((s) => {
-              const count = activeSubTab === 'pending'
-                ? (handoverState[s] ?? []).length
-                : (historyState[s] ?? []).length;
-              return (
+        {/* Filter & Sort Toolbar */}
+        <div className="space-y-2.5 pt-3 border-t border-[#F6F2EB]">
+          <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5 text-xs">
+            {[
+              { id: 'ALL', label: 'Semua', count: activeSubTab === 'pending' ? totalHandoverCount : totalHistoryCount },
+              ...(activeSubTab === 'pending' ? activeHandoverSurveyors : historySurveyors).map((s) => ({
+                id: s,
+                label: s,
+                count: ((activeSubTab === 'pending' ? handoverState : historyState)[s] ?? []).length,
+              })),
+            ].map((chip) => (
+              <button
+                key={chip.id}
+                onClick={() => setSelectedSurveyorFilter(chip.id)}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
+                  selectedSurveyorFilter === chip.id
+                    ? chip.id === 'ALL'
+                      ? 'bg-[#2D2824] text-white'
+                      : activeSubTab === 'pending' ? 'bg-[#D97757] text-white' : 'bg-[#548A70] text-white'
+                    : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+                }`}
+              >
+                {chip.label} ({chip.count})
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            {activeSubTab === 'history' ? (
+              <div className="relative w-full sm:w-64">
+                <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#79716B]" />
+                <input
+                  type="text"
+                  value={historySearch}
+                  onChange={(e) => setHistorySearch(e.target.value)}
+                  placeholder="Cari di riwayat..."
+                  className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-[#FAF8F5] border border-[#EAE4DC] text-xs text-[#2D2824] placeholder-[#79716B] focus:outline-hidden focus:border-[#548A70]"
+                />
+                {historySearch && (
+                  <button
+                    onClick={() => setHistorySearch('')}
+                    aria-label="Hapus pencarian riwayat"
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#79716B] hover:text-[#2D2824]"
+                  >
+                    <X size={13} />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <span />
+            )}
+
+            <div role="group" aria-label="Urutan cetak" className="bg-[#F6F2EB] p-0.5 rounded-xl border border-[#EAE4DC] flex items-center text-xs">
+              {([
+                { id: 'default', label: 'Per Investigator' },
+                { id: 'alphabetical', label: 'A–Z' },
+              ] as const).map((opt) => (
                 <button
-                  key={s}
-                  onClick={() => setSelectedSurveyorFilter(s)}
-                  className={`px-3 py-1 rounded-lg text-xs font-semibold shrink-0 transition-colors ${
-                    selectedSurveyorFilter === s
-                      ? activeSubTab === 'pending'
-                        ? 'bg-[#D97757] text-white'
-                        : 'bg-[#548A70] text-white'
-                      : 'bg-[#F6F2EB] text-[#79716B] hover:text-[#2D2824]'
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setPrintSortMode(opt.id)}
+                  className={`px-3 py-1 rounded-lg font-semibold transition-all ${
+                    printSortMode === opt.id
+                      ? 'bg-[#FFFFFF] text-[#2D2824] shadow-xs'
+                      : 'text-[#79716B] hover:text-[#2D2824]'
                   }`}
                 >
-                  {s} ({count})
+                  {opt.label}
                 </button>
-              );
-            })}
-          </div>
-
-          {activeSubTab === 'history' && (
-            <div className="relative w-full sm:w-64 shrink-0">
-              <MagnifyingGlass size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#79716B]" />
-              <input
-                type="text"
-                value={historySearch}
-                onChange={(e) => setHistorySearch(e.target.value)}
-                placeholder="Cari di riwayat..."
-                className="w-full pl-8 pr-7 py-1.5 rounded-xl bg-[#FAF8F5] border border-[#EAE4DC] text-xs text-[#2D2824] placeholder-[#79716B] focus:outline-hidden focus:border-[#548A70]"
-              />
-              {historySearch && (
-                <button
-                  onClick={() => setHistorySearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#79716B] hover:text-[#2D2824]"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Print Layout & Sorting Options */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 pt-2 border-t border-[#F6F2EB] text-xs">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[#79716B] font-medium shrink-0">Opsi Urutan Cetak:</span>
-            <div className="bg-[#F6F2EB] p-0.5 rounded-xl border border-[#EAE4DC] flex items-center">
-              <button
-                type="button"
-                onClick={() => setPrintSortMode('default')}
-                className={`px-3 py-1 rounded-lg font-bold text-xs transition-all ${
-                  printSortMode === 'default'
-                    ? 'bg-[#FFFFFF] text-[#2D2824] shadow-xs border border-[#EAE4DC]'
-                    : 'text-[#79716B] hover:text-[#2D2824] border border-transparent'
-                }`}
-              >
-                Default (Per Investigator)
-              </button>
-              <button
-                type="button"
-                onClick={() => setPrintSortMode('alphabetical')}
-                className={`px-3 py-1 rounded-lg font-bold text-xs transition-all ${
-                  printSortMode === 'alphabetical'
-                    ? activeSubTab === 'pending'
-                      ? 'bg-[#FFFFFF] text-[#D97757] shadow-xs border border-[#F7D0C4]'
-                      : 'bg-[#FFFFFF] text-[#548A70] shadow-xs border border-[#C8E2D4]'
-                    : 'text-[#79716B] hover:text-[#2D2824] border border-transparent'
-                }`}
-              >
-                Abjad Nasabah (A–Z)
-              </button>
+              ))}
             </div>
           </div>
-
-          <span className="text-[#79716B] text-[11px] font-semibold">
-            {activeSubTab === 'pending' ? totalHandoverCount : totalHistoryCount} Berkas Terdata
-          </span>
         </div>
       </div>
 
@@ -469,20 +442,11 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
         <div className="flex justify-between items-baseline">
           <h1 className="text-base font-black tracking-tight text-black uppercase">
             {activeSubTab === 'pending'
-              ? printSortMode === 'alphabetical'
-                ? 'DAFTAR URUTAN DOKUMEN FISIK (URUT ABJAD NASABAH)'
-                : 'DAFTAR URUTAN DOKUMEN FISIK'
-              : printSortMode === 'alphabetical'
-                ? 'DAFTAR DOKUMEN FISIK - ARSIP RIWAYAT (URUT ABJAD NASABAH)'
-                : 'DAFTAR DOKUMEN FISIK (ARSIP RIWAYAT)'}
+              ? 'DAFTAR PENYERAHAN DOKUMEN FISIK'
+              : 'RIWAYAT PENYERAHAN DOKUMEN FISIK'}
           </h1>
           <span className="text-[10px] text-black">Dicetak: {PRINT_DATE_STRING}</span>
         </div>
-        <p className="text-[10px] text-black mt-0.5">
-          {printSortMode === 'alphabetical'
-            ? '* Diurutkan berdasarkan abjad nama nasabah (A–Z).'
-            : '* Urutan nomor atas adalah dokumen tumpukan paling atas.'}
-        </p>
       </div>
 
       {/* CONTENT LIST / TABLES (DRY) */}
@@ -492,7 +456,7 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
             <div className="bg-[#FFFFFF] border border-[#EAE4DC] print:border-black rounded-2xl print:rounded-none overflow-hidden shadow-xs print:shadow-none">
               <div className="bg-[#FAF8F5] print:bg-gray-100 border-b border-[#EAE4DC] print:border-black px-4 py-2.5 print:py-1.5 print:px-2 flex items-center justify-between">
                 <span className="font-extrabold text-xs sm:text-sm print:text-xs text-[#2D2824] print:text-black uppercase tracking-wide">
-                  DAFTAR BERKAS DIURUTKAN BERDASARKAN ABJAD NASABAH (A–Z)
+                  {selectedSurveyorFilter === 'ALL' ? 'SEMUA BERKAS' : `INVESTIGATOR: ${selectedSurveyorFilter}`}
                 </span>
                 <span className="text-[11px] print:text-[10px] font-semibold text-[#79716B] print:text-black">
                   Total: {alphabeticalPendingItems.length} Berkas
@@ -557,7 +521,7 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
           <div className="bg-[#FFFFFF] border border-[#EAE4DC] print:border-black rounded-2xl print:rounded-none overflow-hidden shadow-xs print:shadow-none">
             <div className="bg-[#FAF8F5] print:bg-gray-100 border-b border-[#EAE4DC] print:border-black px-4 py-2.5 print:py-1.5 print:px-2 flex items-center justify-between">
               <span className="font-extrabold text-xs sm:text-sm print:text-xs text-[#2D2824] print:text-black uppercase tracking-wide">
-                ARSIP RIWAYAT DIURUTKAN BERDASARKAN ABJAD NASABAH (A–Z)
+                {selectedSurveyorFilter === 'ALL' ? 'SEMUA BERKAS DISERAHKAN' : `INVESTIGATOR: ${selectedSurveyorFilter}`}
               </span>
               <span className="text-[11px] print:text-[10px] font-semibold text-[#548A70] print:text-black bg-[#EEF6F1] print:bg-transparent border border-[#C8E2D4] print:border-0 px-2 py-0.5 rounded-full">
                 Total: {alphabeticalHistoryItems.length} Berkas
@@ -739,10 +703,10 @@ export const HandoverView: React.FC<HandoverViewProps> = ({
       {/* CONFIRM CLEAR MODAL */}
       <ConfirmModal
         isOpen={isClearModalOpen}
-        title="Kosongkan Antrean Pengambilan"
-        message="Apakah Anda yakin ingin membatalkan antrean ini? Berkas tidak akan tercatat sebagai sudah diserahkan."
-        confirmLabel="Ya, Kosongkan"
-        cancelLabel="Batal"
+        title="Batalkan Antrean Pengambilan"
+        message="Apakah Anda yakin ingin membatalkan antrean ini? Seluruh berkas akan dikembalikan ke tumpukan meja fisik ordner masing-masing."
+        confirmLabel="Ya, Batalkan & Kembalikan ke Meja"
+        cancelLabel="Kembali"
         isDestructive={true}
         onConfirm={handleConfirmClear}
         onCancel={() => setIsClearModalOpen(false)}

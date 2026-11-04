@@ -68,25 +68,32 @@ export function useHandoverView({
   // Investigators that have history entries
   const historySurveyors = useMemo(() => {
     return Object.keys(historyState).filter(
-      (s) => (historyState[s] ?? []).length > 0 && s !== 'BELUM DITUGASKAN'
+      (s) => (historyState[s] ?? []).length > 0
     );
   }, [historyState]);
 
+  // Derive a valid filter for the active sub-tab without triggering cascading effects
+  const effectiveSurveyorFilter = useMemo(() => {
+    if (selectedSurveyorFilter === 'ALL') return 'ALL';
+    const validSurveyors = activeSubTab === 'pending' ? activeHandoverSurveyors : historySurveyors;
+    return validSurveyors.includes(selectedSurveyorFilter) ? selectedSurveyorFilter : 'ALL';
+  }, [activeSubTab, activeHandoverSurveyors, historySurveyors, selectedSurveyorFilter]);
+
   // Pending groups to display
   const displayPendingGroups = useMemo(() => {
-    if (selectedSurveyorFilter === 'ALL') {
+    if (effectiveSurveyorFilter === 'ALL') {
       return activeHandoverSurveyors.map((s) => ({
         surveyor: s,
         items: handoverState[s] ?? [],
       }));
     }
-    const items = handoverState[selectedSurveyorFilter] ?? [];
-    return items.length > 0 ? [{ surveyor: selectedSurveyorFilter, items }] : [];
-  }, [handoverState, selectedSurveyorFilter, activeHandoverSurveyors]);
+    const items = handoverState[effectiveSurveyorFilter] ?? [];
+    return items.length > 0 ? [{ surveyor: effectiveSurveyorFilter, items }] : [];
+  }, [handoverState, effectiveSurveyorFilter, activeHandoverSurveyors]);
 
   // History groups to display
   const displayHistoryGroups = useMemo(() => {
-    const listSurv = selectedSurveyorFilter === 'ALL' ? historySurveyors : [selectedSurveyorFilter];
+    const listSurv = effectiveSurveyorFilter === 'ALL' ? historySurveyors : [effectiveSurveyorFilter];
     const q = historySearch.toLowerCase().trim();
 
     return listSurv.map((s) => {
@@ -103,7 +110,7 @@ export function useHandoverView({
       }
       return { surveyor: s, items };
     }).filter((g) => g.items.length > 0);
-  }, [historyState, selectedSurveyorFilter, historySurveyors, historySearch]);
+  }, [historyState, effectiveSurveyorFilter, historySurveyors, historySearch]);
 
   // Alphabetical items across current filter (A–Z by debtor name)
   const alphabeticalPendingItems = useMemo(() => {
@@ -127,7 +134,7 @@ export function useHandoverView({
   }, [handoverState]);
 
   const totalHistoryCount = useMemo(() => {
-    return Object.values(historyState).reduce((acc, list) => acc + list.length, 0);
+    return Object.values(historyState).reduce((acc, list) => acc + (list?.length ?? 0), 0);
   }, [historyState]);
 
   // Desk pile items available to take in the active surveyor
@@ -196,15 +203,33 @@ export function useHandoverView({
   };
 
   const handleConfirmClear = () => {
-    onClearHandover(selectedSurveyorFilter === 'ALL' ? undefined : selectedSurveyorFilter);
+    onClearHandover(effectiveSurveyorFilter === 'ALL' ? undefined : effectiveSurveyorFilter);
     setIsClearModalOpen(false);
-    onShowToast('info', 'Daftar Dikosongkan', 'Semua berkas pada antrean pengambilan telah dibersihkan.');
+    onShowToast('info', 'Antrean Dibatalkan', 'Semua berkas pada antrean pengambilan telah dikembalikan ke tumpukan meja.');
   };
 
   const handleConfirmArchive = () => {
-    const targetSurv = selectedSurveyorFilter === 'ALL' ? undefined : selectedSurveyorFilter;
+    const hasUnassigned = (handoverState['BELUM DITUGASKAN']?.length ?? 0) > 0;
+    if (
+      (effectiveSurveyorFilter === 'ALL' && hasUnassigned) ||
+      effectiveSurveyorFilter === 'BELUM DITUGASKAN'
+    ) {
+      setIsArchiveModalOpen(false);
+      onShowToast(
+        'warning',
+        'Investigator Belum Ditetapkan',
+        'Tetapkan investigator terlebih dahulu pada kotak peringatan kuning di atas sebelum mengarsipkan.'
+      );
+      return;
+    }
+
+    const targetSurv =
+      effectiveSurveyorFilter !== 'ALL' && (handoverState[effectiveSurveyorFilter]?.length ?? 0) > 0
+        ? effectiveSurveyorFilter
+        : undefined;
     onArchiveHandover(targetSurv);
     setIsArchiveModalOpen(false);
+    setSelectedSurveyorFilter('ALL');
     setActiveSubTab('history');
     onShowToast(
       'success',
@@ -216,7 +241,7 @@ export function useHandoverView({
   return {
     activeSubTab,
     setActiveSubTab,
-    selectedSurveyorFilter,
+    selectedSurveyorFilter: effectiveSurveyorFilter,
     setSelectedSurveyorFilter,
     historySearch,
     setHistorySearch,

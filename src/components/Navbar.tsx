@@ -10,6 +10,13 @@ import {
   Printer,
 } from '@phosphor-icons/react';
 import { BottomSheet } from './BottomSheet';
+import {
+  CloudCheck,
+  ArrowsClockwise,
+  CloudSlash,
+  CloudWarning,
+} from '@phosphor-icons/react';
+import { useGlobalSyncStatus } from '../hooks/useCloudSyncedState';
 
 export type ActiveTab = 'search' | 'insert' | 'status' | 'catalog' | 'handover';
 
@@ -35,6 +42,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   totalHandoverDocs = 0,
 }) => {
   const [isOrdnerSheetOpen, setIsOrdnerSheetOpen] = useState(false);
+  const syncStatus = useGlobalSyncStatus();
 
   const tabs = [
     { id: 'search' as ActiveTab, label: 'Cari Berkas', shortLabel: 'Cari', icon: MagnifyingGlass },
@@ -92,18 +100,57 @@ export const Navbar: React.FC<NavbarProps> = ({
             })}
           </nav>
 
-          {/* Ordner Selector Button (Thumb-Friendly Touch Target) */}
-          <button
-            onClick={() => setIsOrdnerSheetOpen(true)}
-            className="min-h-[36px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] border border-[#EAE4DC] text-xs font-semibold text-[#2D2824] transition-colors shrink-0"
-            title="Pilih Ordner Aktif"
-          >
-            <FolderSimple size={14} className="text-[#D97757] shrink-0" weight="fill" />
-            <span className="max-w-[105px] xs:max-w-[145px] sm:max-w-[180px] truncate text-left">
-              {activeSurveyor}
-            </span>
-            <CaretDown size={13} className="text-[#79716B] shrink-0" weight="bold" />
-          </button>
+          {/* Right Action Cluster: Cloud Sync Indicator + Ordner Selector */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* Cloud Sync Status Indicator */}
+            <div
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs font-semibold border transition-colors shrink-0 ${
+                syncStatus === 'synced'
+                  ? 'bg-[#EEF6F1] text-[#548A70] border-[#C8E2D4]'
+                  : syncStatus === 'syncing'
+                  ? 'bg-[#EEF3FA] text-[#5D7CB0] border-[#DEE7F5]'
+                  : syncStatus === 'error'
+                  ? 'bg-[#FDF1ED] text-[#D97757] border-[#F7D0C4]'
+                  : 'bg-[#F6F2EB] text-[#79716B] border-[#EAE4DC]'
+              }`}
+              title={
+                syncStatus === 'synced'
+                  ? 'Sinkronisasi Turso: Semua data tersimpan aman di cloud'
+                  : syncStatus === 'syncing'
+                  ? 'Sinkronisasi Turso: Sedang mengirim perubahan ke cloud...'
+                  : syncStatus === 'error'
+                  ? 'Sinkronisasi Turso: Gagal mengirim ke cloud (periksa jaringan)'
+                  : 'Mode Offline: Berjalan di penyimpanan lokal'
+              }
+            >
+              {syncStatus === 'synced' && <CloudCheck size={14} weight="bold" className="shrink-0" />}
+              {syncStatus === 'syncing' && <ArrowsClockwise size={14} weight="bold" className="animate-spin shrink-0" />}
+              {syncStatus === 'error' && <CloudWarning size={14} weight="bold" className="shrink-0" />}
+              {syncStatus === 'offline' && <CloudSlash size={14} weight="bold" className="shrink-0" />}
+              <span className="hidden sm:inline">
+                {syncStatus === 'synced'
+                  ? 'Tersimpan'
+                  : syncStatus === 'syncing'
+                  ? 'Menyimpan...'
+                  : syncStatus === 'error'
+                  ? 'Gagal Sync'
+                  : 'Lokal'}
+              </span>
+            </div>
+
+            {/* Ordner Selector Button (Thumb-Friendly Touch Target) */}
+            <button
+              onClick={() => setIsOrdnerSheetOpen(true)}
+              className="min-h-[36px] flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-[#F6F2EB] hover:bg-[#EAE4DC] border border-[#EAE4DC] text-xs font-semibold text-[#2D2824] transition-colors shrink-0"
+              title="Pilih Ordner Aktif"
+            >
+              <FolderSimple size={14} className="text-[#D97757] shrink-0" weight="fill" />
+              <span className="max-w-[105px] xs:max-w-[145px] sm:max-w-[180px] truncate text-left">
+                {activeSurveyor}
+              </span>
+              <CaretDown size={13} className="text-[#79716B] shrink-0" weight="bold" />
+            </button>
+          </div>
         </div>
       </header>
 

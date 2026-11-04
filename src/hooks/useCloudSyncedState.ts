@@ -1,4 +1,44 @@
-import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useEffect, useRef, useState, useCallback, useSyncExternalStore, type Dispatch, type SetStateAction } from 'react';
+
+export type GlobalSyncStatus = 'synced' | 'syncing' | 'error' | 'offline';
+
+const activeSyncingKeys = new Set<string>();
+const syncErrorKeys = new Set<string>();
+let isServerConfigured = true;
+const statusListeners = new Set<(status: GlobalSyncStatus) => void>();
+
+function notifyStatus() {
+  let status: GlobalSyncStatus = 'synced';
+  if (!isServerConfigured) {
+    status = 'offline';
+  } else if (activeSyncingKeys.size > 0) {
+    status = 'syncing';
+  } else if (syncErrorKeys.size > 0) {
+    status = 'error';
+  }
+  statusListeners.forEach((fn) => fn(status));
+}
+
+export function subscribeSyncStatus(listener: (status: GlobalSyncStatus) => void): () => void {
+  statusListeners.add(listener);
+  return () => {
+    statusListeners.delete(listener);
+  };
+}
+
+export function getSyncStatusSnapshot(): GlobalSyncStatus {
+  if (!isServerConfigured) return 'offline';
+  if (activeSyncingKeys.size > 0) return 'syncing';
+  if (syncErrorKeys.size > 0) return 'error';
+  return 'synced';
+}
+
+/**
+ * React hook to observe global Turso cloud synchronization status.
+ */
+export function useGlobalSyncStatus(): GlobalSyncStatus {
+  return useSyncExternalStore(subscribeSyncStatus, getSyncStatusSnapshot);
+}
 
 export interface CloudSyncOptions<T> {
   /** Optional key in localStorage for cross-tab synchronization. */
@@ -20,14 +60,11 @@ export interface CloudSyncOptions<T> {
 }
 
 /**
- * State that is persisted locally and mirrored to the cloud.
- *  - Pushes are blocked until the first server fetch settles (prevents a stale
- *    local state from overwriting the cloud on mount).
- *  - Pushes are skipped when the state equals the last known server state
- *    (prevents echo pushes).
- *  - All side effects live in effects, never inside state updaters.
- *
- * `options` is read once on mount; pass a module-level constant.
+ * State that is persisted locally and mirrored to the cloud (Turso LibSQL).
+ *  - Uncommitted local mutations are tracked with `isDirtyRef` to prevent
+ *    stale remote snapshots from overwriting fresh local updates on reload.
+ *  - Pushes are debounced and tracked globally for sync status indicators.
+ *  - Warns on unexpected window close/refresh while push is actively in flight.
  */
 export function useCloudSyncedState<T extends object>(
   options: CloudSyncOptions<T>
@@ -37,10 +74,13 @@ export function useCloudSyncedState<T extends object>(
     const loaded = load();
     return normalize ? normalize(loaded) : loaded;
   });
+
   const optionsRef = useRef(options);
   const [isHydrated, setIsHydrated] = useState(false);
   const lastSyncedRef = useRef<string | null>(null);
   const stateRef = useRef(state);
+  const isDirtyRef = useRef(false);
+  const syncKey = options.storageKey || 'unnamed-scope';
 
   useEffect(() => {
     optionsRef.current = options;
@@ -49,6 +89,29 @@ export function useCloudSyncedState<T extends object>(
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
+
+  const setSyncedState: Dispatch<SetStateAction<T>> = useCallback((action) => {
+    isDirtyRef.current = true;
+    setState((prev) => {
+      const next = typeof action === 'function' ? (action as (p: T) => T)(prev) : action;
+      return next;
+    });
+  }, []);
+
+  // Prevent accidental window close or reload while a cloud sync is actively pending
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isDirtyRef.current || activeSyncingKeys.has(syncKey)) {
+        e.preventDefault();
+        e.returnValue = 'Data sedang disimpan ke Cloud. Yakin ingin keluar?';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [syncKey]);
 
   // Cross-tab synchronization: respond immediately when another open tab writes to localStorage
   useEffect(() => {
@@ -77,6 +140,7 @@ export function useCloudSyncedState<T extends object>(
     };
   }, []);
 
+  // Initial Fetch from Remote (Turso Cloud)
   useEffect(() => {
     let cancelled = false;
     const { fetchRemote, adoptEmptyRemote, normalize } = optionsRef.current;
@@ -85,40 +149,118 @@ export function useCloudSyncedState<T extends object>(
       if (cancelled) return;
       if (remote === null) {
         // Offline / not configured: treat local as in sync, stay local-only.
+        isServerConfigured = false;
+        notifyStatus();
         lastSyncedRef.current = JSON.stringify(stateRef.current);
       } else if (adoptEmptyRemote || Object.keys(remote).length > 0) {
-        // Remember the RAW server state: if normalisation changes it, the
-        // persist effect pushes the healed version back to the cloud.
-        lastSyncedRef.current = JSON.stringify(remote);
-        setState(normalize ? normalize(remote) : remote);
+        // CRITICAL INVARIANT: If local state has pending uncommitted mutations that happened
+        // before the fetch completed, DO NOT overwrite with stale remote!
+        if (isDirtyRef.current) {
+          console.warn(`[Sync] Scope ${syncKey} has pending local mutations; preserving local state.`);
+        } else {
+          lastSyncedRef.current = JSON.stringify(remote);
+          setState(normalize ? normalize(remote) : remote);
+        }
+        isServerConfigured = true;
+        notifyStatus();
       }
-      // else: reachable but empty -> keep local; the persist effect seeds the cloud.
       setIsHydrated(true);
     });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [syncKey]);
 
+  const inFlightRef = useRef(false);
+  const pendingPushRef = useRef<T | null>(null);
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Push remote with concurrency queue & status management
+  const triggerPush = useCallback(
+    async (snapshot: T) => {
+      if (inFlightRef.current) {
+        pendingPushRef.current = snapshot;
+        return;
+      }
+
+      inFlightRef.current = true;
+      activeSyncingKeys.add(syncKey);
+      notifyStatus();
+
+      try {
+        const { pushRemote } = optionsRef.current;
+        const success = await pushRemote(snapshot);
+        if (success) {
+          syncErrorKeys.delete(syncKey);
+          lastSyncedRef.current = JSON.stringify(snapshot);
+        } else {
+          syncErrorKeys.add(syncKey);
+        }
+      } catch {
+        syncErrorKeys.add(syncKey);
+      } finally {
+        inFlightRef.current = false;
+        const nextPending = pendingPushRef.current;
+        if (nextPending && JSON.stringify(nextPending) !== lastSyncedRef.current) {
+          pendingPushRef.current = null;
+          void triggerPush(nextPending);
+        } else {
+          pendingPushRef.current = null;
+          isDirtyRef.current = false;
+          activeSyncingKeys.delete(syncKey);
+          notifyStatus();
+        }
+      }
+    },
+    [syncKey]
+  );
+
+  // Persist to LocalStorage immediately, and Debounce Push to Cloud
   useEffect(() => {
     if (!isHydrated) return;
-    const { save, pushRemote } = optionsRef.current;
-    save(state);
-    const serialized = JSON.stringify(state);
-    if (serialized === lastSyncedRef.current) return;
+    const { save } = optionsRef.current;
 
-    let cancelled = false;
-    pushRemote(state).then((success) => {
-      if (!cancelled && success) {
-        lastSyncedRef.current = serialized;
-      }
-    });
+    // Always immediately persist locally to localStorage
+    save(state);
+
+    const serialized = JSON.stringify(state);
+    if (serialized === lastSyncedRef.current) {
+      isDirtyRef.current = false;
+      return;
+    }
+
+    isDirtyRef.current = true;
+    activeSyncingKeys.add(syncKey);
+    notifyStatus();
+
+    if (debounceTimerRef.current) {
+      clearTimeout(debounceTimerRef.current);
+    }
+
+    debounceTimerRef.current = setTimeout(() => {
+      debounceTimerRef.current = null;
+      void triggerPush(state);
+    }, 350);
 
     return () => {
-      cancelled = true;
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+        debounceTimerRef.current = null;
+      }
     };
-  }, [state, isHydrated]);
+  }, [state, isHydrated, syncKey, triggerPush]);
 
-  return [state, setState];
+  // Clean up syncing keys if component unmounts
+  useEffect(() => {
+    return () => {
+      if (debounceTimerRef.current) {
+        clearTimeout(debounceTimerRef.current);
+      }
+      activeSyncingKeys.delete(syncKey);
+      notifyStatus();
+    };
+  }, [syncKey]);
+
+  return [state, setSyncedState];
 }

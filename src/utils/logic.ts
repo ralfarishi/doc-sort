@@ -82,7 +82,9 @@ export function matchQuery(
         if (
           exNameNorm === foNorm ||
           qNorm === foNorm ||
-          nameSimilarity(ex.debitur, fo.clean_name) >= 0.85
+          // Folders are physical evidence: only link on (token-order-insensitive) exact names, never near-misses
+          // such as HARTINI vs KARTINI or SUMIATI vs DJUMIATI.
+          nameSimilarity(ex.debitur, fo.clean_name) >= 1.0
         ) {
           candFolders.push(fo);
         }
@@ -550,7 +552,6 @@ export async function pushServerSnapshot<T>(scope: SyncScope, state: T): Promise
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state),
-      keepalive: true,
     });
     return res.ok;
   } catch {
@@ -747,22 +748,98 @@ export function returnHandoverItemToMaster(
   }
 
   // Insert back into master pile in alphabetical order (A-Z)
+  const itemData: MasterItem = itemToReturn.item_data ?? {
+    no: itemToReturn.no,
+    id_klaim: itemToReturn.id_klaim,
+    debitur: itemToReturn.debitur,
+    kota: itemToReturn.kota,
+    wilayah: itemToReturn.wilayah,
+    jenis_case: itemToReturn.jenis_case,
+    surveyor: itemToReturn.surveyor || surveyor,
+    visit: '',
+    status_laporan: '',
+    hasil_visit: '',
+    files_count: 0,
+    folder_path: '',
+  };
+
   const pile = [...(master[surveyor] ?? [])];
-  const debNorm = normalize(itemToReturn.item_data.debitur);
+  const debNorm = normalize(itemData.debitur);
   let insertIdx = 0;
   while (insertIdx < pile.length) {
     const cur = pile[insertIdx];
     if (!cur || normalize(cur.debitur) >= debNorm) break;
     insertIdx++;
   }
-  pile.splice(insertIdx, 0, itemToReturn.item_data);
+  pile.splice(insertIdx, 0, itemData);
 
   const nextMaster: MasterState = {
     ...master,
     [surveyor]: pile,
   };
 
-  return { nextMaster, nextHandover, returnedItem: itemToReturn.item_data };
+  return { nextMaster, nextHandover, returnedItem: itemData };
+}
+
+/**
+ * Restores all items in handover list (or for a specific surveyor) back into the physical master piles.
+ * Each item is restored in its proper alphabetical (A-Z) position in the physical pile.
+ */
+export function returnAllHandoverToMaster(
+  master: MasterState,
+  handover: HandoverState,
+  surveyor?: string
+): { nextMaster: MasterState; nextHandover: HandoverState; returnedCount: number } {
+  const targetSurveyors = !surveyor || surveyor === 'ALL'
+    ? Object.keys(handover)
+    : (handover[surveyor] ? [surveyor] : []);
+
+  let nextMaster: MasterState = { ...master };
+  const nextHandover: HandoverState = { ...handover };
+  let returnedCount = 0;
+
+  for (const s of targetSurveyors) {
+    const items = handover[s];
+    if (!items || items.length === 0) continue;
+
+    const pile = [...(nextMaster[s] ?? [])];
+    for (const h of items) {
+      const itemData: MasterItem = h.item_data ?? {
+        no: h.no,
+        id_klaim: h.id_klaim,
+        debitur: h.debitur,
+        kota: h.kota,
+        wilayah: h.wilayah,
+        jenis_case: h.jenis_case,
+        surveyor: h.surveyor || s,
+        visit: '',
+        status_laporan: '',
+        hasil_visit: '',
+        files_count: 0,
+        folder_path: '',
+      };
+
+      const existingIdx = pile.findIndex(
+        (p) => `${p.jenis_case}#${p.no}` === `${itemData.jenis_case}#${itemData.no}`
+      );
+      if (existingIdx === -1) {
+        const debNorm = normalize(itemData.debitur);
+        let insertIdx = 0;
+        while (insertIdx < pile.length) {
+          const cur = pile[insertIdx];
+          if (!cur || normalize(cur.debitur) >= debNorm) break;
+          insertIdx++;
+        }
+        pile.splice(insertIdx, 0, itemData);
+        returnedCount++;
+      }
+    }
+
+    nextMaster[s] = pile;
+    delete nextHandover[s];
+  }
+
+  return { nextMaster, nextHandover, returnedCount };
 }
 
 /**
@@ -808,26 +885,34 @@ export function archiveHandoverToHistory(
     const items = handover[surv] ?? [];
     if (items.length === 0) continue;
 
-    const newHistoryEntries: HandoverHistoryItem[] = items.map((it) => ({
-      id: it.id || createId(),
-      debitur: it.debitur,
-      no: it.no,
-      id_klaim: it.id_klaim,
-      kota: it.kota,
-      wilayah: it.wilayah,
-      jenis_case: it.jenis_case,
-      surveyor: it.surveyor,
-      handedOverAt: timestamp,
-      notes: notes || 'Diserahkan via web',
-    }));
-
     const existingHistory = nextHistory[surv] ?? [];
+    const existingKeys = new Set(existingHistory.map((h) => `${h.jenis_case}#${h.no}`));
+
+    const newHistoryEntries: HandoverHistoryItem[] = [];
+    for (const it of items) {
+      const key = `${it.jenis_case}#${it.no}`;
+      if (existingKeys.has(key)) continue;
+      existingKeys.add(key);
+      newHistoryEntries.push({
+        id: it.id || createId(),
+        debitur: it.debitur,
+        no: it.no,
+        id_klaim: it.id_klaim,
+        kota: it.kota,
+        wilayah: it.wilayah,
+        jenis_case: it.jenis_case,
+        surveyor: surv,
+        handedOverAt: timestamp,
+        notes: notes || 'Diserahkan via web',
+      });
+    }
+
     nextHistory[surv] = [...existingHistory, ...newHistoryEntries].sort((a, b) =>
       normalize(a.debitur).localeCompare(normalize(b.debitur))
     );
 
     delete nextHandover[surv];
-    totalArchived += newHistoryEntries.length;
+    totalArchived += items.length;
   }
 
   return { nextHandover, nextHistory, archivedCount: totalArchived };
@@ -839,9 +924,8 @@ function buildHistoryLookupSet(history: HandoverHistoryState): Set<string> {
     if (!Array.isArray(items)) continue;
     for (const it of items) {
       if (it.id) set.add(it.id);
-      if (it.debitur) {
-        set.add(`${normalize(surv)}#${normalize(it.debitur)}#${it.jenis_case || ''}`);
-      }
+      // Identity is the row number, never the name: different people can share the same exact name.
+      set.add(`${normalize(surv)}#${it.jenis_case || ''}#${it.no}`);
     }
   }
   return set;
@@ -898,7 +982,7 @@ export function reconcileHandoverWithHistory(
 
     const filtered = items.filter((it) => {
       if (it.id && historyKeySet.has(it.id)) return false;
-      const dedupeKey = `${normalize(surv)}#${normalize(it.debitur)}#${it.jenis_case || ''}`;
+      const dedupeKey = `${normalize(surv)}#${it.jenis_case || ''}#${it.no}`;
       return !historyKeySet.has(dedupeKey);
     });
 
@@ -1038,4 +1122,127 @@ export function validateDataIntegrity(
   };
 }
 
+// ---------------------------------------------------------------------------
+// History healing & unassigned-bucket reassignment
+// ---------------------------------------------------------------------------
 
+const UNASSIGNED_BUCKET = 'BELUM DITUGASKAN';
+const PURGED_HISTORY_KEY = 'ORGANIZER_PURGED_HISTORY_V1';
+
+const historyKey = (it: { jenis_case: string; no: number | string }) => `${it.jenis_case}#${it.no}`;
+
+/**
+ * History is user data stored in Turso: it is never deleted or rewritten based on any local
+ * folder or PDF index. This only recovers entries that an earlier app version wrongly purged
+ * (kept in a local stash), then empties the stash.
+ */
+export function healHistory(history: HandoverHistoryState): HandoverHistoryState {
+  const stash = readPurgedHistory();
+  let changed = false;
+  const next: HandoverHistoryState = {};
+
+  // 1. Sanitize any legacy corrupted notes (e.g. ENTIN HARTINI having notes "PDF 410: 301_ENTIN_KARTINI.pdf")
+  for (const [surveyor, items] of Object.entries(history || {})) {
+    if (!Array.isArray(items)) continue;
+    const sanitizedItems = items.map((it) => {
+      if (it.notes && it.notes.startsWith('PDF 410:')) {
+        const fname = it.notes
+          .replace('PDF 410:', '')
+          .replace(/^\s*\d+_/, '')
+          .replace(/\.(docx?\.)?pdf$/i, '')
+          .replace(/_10\d-.*$/, '')
+          .replace(/_/g, ' ')
+          .trim()
+          .toUpperCase();
+        const deb = it.debitur.trim().toUpperCase();
+        if (deb !== fname && !fname.includes(deb) && !deb.includes(fname)) {
+          changed = true;
+          return { ...it, notes: 'Diserahkan via web' };
+        }
+      }
+      return it;
+    });
+    next[surveyor] = sanitizedItems;
+  }
+
+  // 2. Restore any previously stashed items
+  if (stash.length > 0) {
+    const present = new Set(Object.values(next).flatMap((items) => items.map(historyKey)));
+    for (const it of stash) {
+      const key = historyKey(it);
+      if (present.has(key)) continue;
+      present.add(key);
+      next[it.surveyor] = [...(next[it.surveyor] ?? []), it];
+      changed = true;
+    }
+    writePurgedHistory([]);
+  }
+
+  return changed ? next : history;
+}
+
+function readPurgedHistory(): HandoverHistoryItem[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(PURGED_HISTORY_KEY) ?? '[]');
+    return Array.isArray(parsed) ? (parsed as HandoverHistoryItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePurgedHistory(items: HandoverHistoryItem[]): void {
+  try {
+    localStorage.setItem(PURGED_HISTORY_KEY, JSON.stringify(items));
+  } catch {
+    // Storage unavailable: nothing to recover from.
+  }
+}
+/** Number of documents sitting in the "BELUM DITUGASKAN" bucket of the desk and the handover queue. */
+export function countUnassignedBucket(master: MasterState, handover: HandoverState): number {
+  return (master[UNASSIGNED_BUCKET]?.length ?? 0) + (handover[UNASSIGNED_BUCKET]?.length ?? 0);
+}
+
+/**
+ * Moves everything in the "BELUM DITUGASKAN" bucket (desk pile + handover queue) to a real
+ * investigator. Desk items keep A–Z order; rows already present in the target are skipped.
+ */
+export function reassignUnassignedBucket(
+  master: MasterState,
+  handover: HandoverState,
+  target: string
+): { nextMaster: MasterState; nextHandover: HandoverState; moved: number } {
+  if (!isKnownSurveyor(target)) return { nextMaster: master, nextHandover: handover, moved: 0 };
+
+  const idOf = (r: { jenis_case: string; no: number | string }) => `${r.jenis_case}#${r.no}`;
+  let moved = 0;
+
+  const nextMaster: MasterState = { ...master };
+  const pile = [...(nextMaster[target] ?? [])];
+  const present = new Set(pile.map(idOf));
+  for (const it of nextMaster[UNASSIGNED_BUCKET] ?? []) {
+    if (present.has(idOf(it))) continue;
+    const key = normalize(it.debitur);
+    let at = 0;
+    while (at < pile.length && normalize(pile[at]?.debitur) < key) at++;
+    pile.splice(at, 0, { ...it, surveyor: target });
+    present.add(idOf(it));
+    moved++;
+  }
+  delete nextMaster[UNASSIGNED_BUCKET];
+  if (moved > 0) nextMaster[target] = pile;
+
+  const nextHandover: HandoverState = { ...handover };
+  const queue = [...(nextHandover[target] ?? [])];
+  const queued = new Set(queue.map(idOf));
+  let movedHandover = 0;
+  for (const it of nextHandover[UNASSIGNED_BUCKET] ?? []) {
+    if (queued.has(idOf(it))) continue;
+    queue.push({ ...it, surveyor: target, item_data: { ...it.item_data, surveyor: target } });
+    queued.add(idOf(it));
+    movedHandover++;
+  }
+  delete nextHandover[UNASSIGNED_BUCKET];
+  if (movedHandover > 0) nextHandover[target] = queue;
+
+  return { nextMaster, nextHandover, moved: moved + movedHandover };
+}

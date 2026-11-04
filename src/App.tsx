@@ -7,6 +7,7 @@ import { CatalogView } from './components/CatalogView';
 import { HandoverView } from './components/HandoverView';
 import { Toast, type ToastMessage } from './components/Toast';
 import { ConfirmModal } from './components/ConfirmModal';
+import { UnassignedBucketNotice } from './components/UnassignedBucketNotice';
 
 import type { ExcelRecord, FolderRecord, MasterState, MasterItem, MatchResult, TransitState, TransitItem, HandoverState, HandoverHistoryState } from './types';
 import {
@@ -26,6 +27,8 @@ import {
   simulateHandInsertion,
   getCleanInvestigatorName,
   isKnownSurveyor,
+  healHistory,
+  reassignUnassignedBucket,
   STORAGE_KEYS,
 } from './utils/logic';
 import { useCloudSyncedState } from './hooks/useCloudSyncedState';
@@ -81,6 +84,8 @@ export function App() {
     fetchRemote: () => fetchServerSnapshot('history', isHandoverHistoryState),
     pushRemote: (state) => pushServerSnapshot('history', state),
     adoptEmptyRemote: false, // first-run seeds the cloud from initialHistory
+    // Recover entries an older version wrongly purged; history is never pruned against folders/PDFs.
+    normalize: healHistory,
   });
 
   // Auto-heal: Purge any ghost items in handoverState that are already archived in historyState
@@ -203,6 +208,15 @@ export function App() {
     );
   };
 
+  // Move the whole "BELUM DITUGASKAN" bucket (desk + handover queue) to a real investigator
+  const handleReassignUnassigned = (target: string) => {
+    const { nextMaster, nextHandover, moved } = reassignUnassignedBucket(masterState, handoverState, target);
+    if (moved === 0) return;
+    setMasterState(nextMaster);
+    setHandoverState(nextHandover);
+    showToast('success', 'Berkas Dipindahkan', `${moved} berkas dari "Belum Ditugaskan" kini milik ${target}.`);
+  };
+
   // Save new master state from Wizard (also automatically removes any filed items from Transit Tray)
   const handleSaveNewMaster = (surveyor: string, newPile: MasterItem[]) => {
     setMasterState((prev) => ({
@@ -279,6 +293,13 @@ export function App() {
 
       {/* Main Content Area */}
       <main className="flex-1 max-w-5xl w-full mx-auto px-3.5 sm:px-6 py-4 sm:py-6 pb-24 lg:pb-10">
+        <UnassignedBucketNotice
+          masterState={masterState}
+          handoverState={handoverState}
+          surveyorsList={surveyorsList}
+          onReassign={handleReassignUnassigned}
+        />
+
         {activeTab === 'search' && (
           <SearchView
             masterState={masterState}

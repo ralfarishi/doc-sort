@@ -1,4 +1,4 @@
-import { useCallback, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useRef, useEffect, type Dispatch, type SetStateAction } from 'react';
 import type {
   MasterState,
   HandoverState,
@@ -9,7 +9,7 @@ import type {
 import {
   takeItemsForHandover,
   returnHandoverItemToMaster,
-  clearHandoverList,
+  returnAllHandoverToMaster,
   archiveHandoverToHistory,
   restoreHistoryItemToHandover,
   restoreAllHistoryToHandover,
@@ -35,71 +35,103 @@ export function useOrganizerOperations({
   setHistoryState,
   onShowToast,
 }: UseOrganizerOperationsParams) {
+  // Synchronous state refs prevent rapid-click stale closure race conditions
+  const masterRef = useRef(masterState);
+  const handoverRef = useRef(handoverState);
+  const historyRef = useRef(historyState);
+
+  useEffect(() => {
+    masterRef.current = masterState;
+  }, [masterState]);
+  useEffect(() => {
+    handoverRef.current = handoverState;
+  }, [handoverState]);
+  useEffect(() => {
+    historyRef.current = historyState;
+  }, [historyState]);
+
   const takeForHandover = useCallback(
     (surveyor: string, itemKeys: Set<string>): { takenItems: HandoverItem[] } => {
       const cleanSurv = getCleanInvestigatorName(surveyor);
       const { nextMaster, nextHandover, takenItems } = takeItemsForHandover(
-        masterState,
-        handoverState,
+        masterRef.current,
+        handoverRef.current,
         cleanSurv,
         itemKeys
       );
+      masterRef.current = nextMaster;
+      handoverRef.current = nextHandover;
       setMasterState(nextMaster);
       setHandoverState(nextHandover);
       return { takenItems };
     },
-    [masterState, handoverState, setMasterState, setHandoverState]
+    [setMasterState, setHandoverState]
   );
 
   const returnFromHandover = useCallback(
     (surveyor: string, handoverId: string): { returnedItem?: MasterItem } => {
       const cleanSurv = getCleanInvestigatorName(surveyor);
       const { nextMaster, nextHandover, returnedItem } = returnHandoverItemToMaster(
-        masterState,
-        handoverState,
+        masterRef.current,
+        handoverRef.current,
         cleanSurv,
         handoverId
       );
+      masterRef.current = nextMaster;
+      handoverRef.current = nextHandover;
       setMasterState(nextMaster);
       setHandoverState(nextHandover);
       return { returnedItem };
     },
-    [masterState, handoverState, setMasterState, setHandoverState]
+    [setMasterState, setHandoverState]
   );
 
   const clearHandover = useCallback(
-    (surveyor?: string) => {
+    (surveyor?: string): { returnedCount: number } => {
       const cleanSurv = surveyor ? getCleanInvestigatorName(surveyor) : undefined;
-      setHandoverState((prev) => clearHandoverList(prev, cleanSurv));
+      const { nextMaster, nextHandover, returnedCount } = returnAllHandoverToMaster(
+        masterRef.current,
+        handoverRef.current,
+        cleanSurv
+      );
+      masterRef.current = nextMaster;
+      handoverRef.current = nextHandover;
+      setMasterState(nextMaster);
+      setHandoverState(nextHandover);
+      return { returnedCount };
     },
-    [setHandoverState]
+    [setMasterState, setHandoverState]
   );
 
   const archiveHandover = useCallback(
     (surveyor?: string, notes?: string): { archivedCount: number } => {
       const cleanSurv = surveyor && surveyor !== 'ALL' ? getCleanInvestigatorName(surveyor) : undefined;
       const { nextHandover, nextHistory, archivedCount } = archiveHandoverToHistory(
-        handoverState,
-        historyState,
+        handoverRef.current,
+        historyRef.current,
         cleanSurv,
         notes
       );
+      handoverRef.current = nextHandover;
+      historyRef.current = nextHistory;
       setHandoverState(nextHandover);
       setHistoryState(nextHistory);
       return { archivedCount };
     },
-    [handoverState, historyState, setHandoverState, setHistoryState]
+    [setHandoverState, setHistoryState]
   );
 
   const restoreHistoryItem = useCallback(
     (surveyor: string, historyId: string): { restoredItem?: HandoverItem } => {
       const cleanSurv = getCleanInvestigatorName(surveyor);
       const { nextHistory, nextHandover, restoredItem } = restoreHistoryItemToHandover(
-        historyState,
-        handoverState,
+        historyRef.current,
+        handoverRef.current,
         cleanSurv,
         historyId
       );
+      historyRef.current = nextHistory;
+      handoverRef.current = nextHandover;
       setHistoryState(nextHistory);
       setHandoverState(nextHandover);
       if (restoredItem) {
@@ -111,17 +143,19 @@ export function useOrganizerOperations({
       }
       return { restoredItem };
     },
-    [historyState, handoverState, setHistoryState, setHandoverState, onShowToast]
+    [setHistoryState, setHandoverState, onShowToast]
   );
 
   const restoreAllHistory = useCallback(
     (surveyor: string): { restoredCount: number } => {
       const cleanSurv = getCleanInvestigatorName(surveyor);
       const { nextHistory, nextHandover, restoredCount } = restoreAllHistoryToHandover(
-        historyState,
-        handoverState,
+        historyRef.current,
+        handoverRef.current,
         cleanSurv
       );
+      historyRef.current = nextHistory;
+      handoverRef.current = nextHandover;
       setHistoryState(nextHistory);
       setHandoverState(nextHandover);
       onShowToast(
@@ -131,7 +165,7 @@ export function useOrganizerOperations({
       );
       return { restoredCount };
     },
-    [historyState, handoverState, setHistoryState, setHandoverState, onShowToast]
+    [setHistoryState, setHandoverState, onShowToast]
   );
 
   return {

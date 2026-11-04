@@ -19,6 +19,9 @@ import {
   collectHandledDebtorKeys,
   formatCatalogMarkdown,
   createTransitItemFromMatch,
+  healHistory,
+  reassignUnassignedBucket,
+  countUnassignedBucket,
 } from './logic.ts';
 
 test('Boundary: Normalization handles null, whitespace, and extreme characters', () => {
@@ -228,4 +231,38 @@ test('DRY Best Practice: scoreDebtorMatch and collectHandledDebtorKeys unify mat
     excel: { ...validMatch.excel, surveyor: 'Belum Ditugaskan' },
   };
   assert.strictEqual(createTransitItemFromMatch(unassignedMatch, 'CANDRA MAULANA'), null);
+});
+
+test('Healing: healHistory is non-destructive and safely preserves existing history', () => {
+  const mk = (id, debitur, no, jenis = '410') => ({ id, debitur, no, id_klaim: 1, kota: '', wilayah: '', jenis_case: jenis, surveyor: 'X', handedOverAt: '2026-10-24T00:00:00.000Z' });
+  const history = {
+    A: [mk('hist-410-141', 'HARYATI', 141), mk('hist-410-79', 'DARYATI', 79), mk('hist-147-5', 'CASE147', 5)],
+    B: [mk('uuid-1', 'USERDEB', 5), mk('hist-410-9', 'NOFILE', 9)],
+  };
+  const healed = healHistory(history);
+  // Must preserve every entry without deleting based on external state
+  assert.strictEqual(healed.A.length, 3);
+  assert.strictEqual(healed.B.length, 2);
+});
+
+test('Healing: unassigned bucket moves to a real investigator in A-Z order without duplicates', () => {
+  const item = (debitur, no, surveyor) => ({ debitur, no, jenis_case: '410', surveyor, id_klaim: 1, kota: '', wilayah: '', visit: '', status_laporan: '', hasil_visit: '', files_count: 0, folder_path: '' });
+  const master = {
+    'BELUM DITUGASKAN': [item('ODIN', 261, 'BELUM DITUGASKAN')],
+    'DEDI ROCHMANSYAH': [item('ALPHA', 1, 'DEDI ROCHMANSYAH'), item('ZETA', 2, 'DEDI ROCHMANSYAH')],
+  };
+  const handover = {
+    'BELUM DITUGASKAN': [{ id: 'h1', debitur: 'ODIN', no: 261, id_klaim: 1, kota: '', wilayah: '', jenis_case: '410', surveyor: 'BELUM DITUGASKAN', originalPosition: 1, item_data: item('ODIN', 261, 'BELUM DITUGASKAN'), timestamp: '' }],
+  };
+  assert.strictEqual(countUnassignedBucket(master, handover), 2);
+
+  const { nextMaster, nextHandover, moved } = reassignUnassignedBucket(master, handover, 'DEDI ROCHMANSYAH');
+  assert.strictEqual(moved, 2);
+  assert.deepStrictEqual(nextMaster['DEDI ROCHMANSYAH'].map((i) => i.debitur), ['ALPHA', 'ODIN', 'ZETA']);
+  assert.strictEqual(nextMaster['BELUM DITUGASKAN'], undefined);
+  assert.strictEqual(nextHandover['DEDI ROCHMANSYAH'][0].surveyor, 'DEDI ROCHMANSYAH');
+  assert.strictEqual(countUnassignedBucket(nextMaster, nextHandover), 0);
+
+  // Placeholder targets are rejected
+  assert.strictEqual(reassignUnassignedBucket(master, handover, 'BELUM DITUGASKAN').moved, 0);
 });
