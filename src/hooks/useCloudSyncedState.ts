@@ -49,7 +49,9 @@ export interface CloudSyncOptions<T> {
   save: (state: T) => void;
   /** `null` = server unreachable/unconfigured; `{}` = reachable but empty. */
   fetchRemote: () => Promise<T | null>;
-  pushRemote: (state: T) => Promise<boolean>;
+  pushRemote: (state: T) => Promise<boolean | 'conflict'>;
+  /** Called after a write lost the race to another device and the remote state was adopted. */
+  onConflict?: () => void;
   /**
    * When true, an empty remote snapshot is authoritative (adopted as-is). When false,
    * an empty remote is seeded from local state instead (first-run behaviour).
@@ -176,6 +178,24 @@ export function useCloudSyncedState<T extends object>(
   const pendingPushRef = useRef<T | null>(null);
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Adopt the server snapshot. 'conflict': another device wrote first, so local edits are
+  // dropped (never overwrite). 'focus': silent refresh when the tab becomes visible again.
+  const adoptRemote = useCallback(async (reason: 'conflict' | 'focus') => {
+    const { fetchRemote, normalize, onConflict } = optionsRef.current;
+    const remote = await fetchRemote();
+    if (remote === null) return;
+    const serialized = JSON.stringify(remote);
+    if (reason === 'focus') {
+      if (isDirtyRef.current || inFlightRef.current || debounceTimerRef.current) return;
+      if (serialized === lastSyncedRef.current) return;
+    }
+    lastSyncedRef.current = serialized;
+    pendingPushRef.current = null;
+    isDirtyRef.current = false;
+    setState(normalize ? normalize(remote) : remote);
+    if (reason === 'conflict') onConflict?.();
+  }, []);
+
   // Push remote with concurrency queue & status management
   const triggerPush = useCallback(
     async (snapshot: T) => {
@@ -188,10 +208,13 @@ export function useCloudSyncedState<T extends object>(
       activeSyncingKeys.add(syncKey);
       notifyStatus();
 
+      let conflicted = false;
       try {
         const { pushRemote } = optionsRef.current;
-        const success = await pushRemote(snapshot);
-        if (success) {
+        const result = await pushRemote(snapshot);
+        if (result === 'conflict') {
+          conflicted = true;
+        } else if (result) {
           syncErrorKeys.delete(syncKey);
           lastSyncedRef.current = JSON.stringify(snapshot);
         } else {
@@ -202,7 +225,12 @@ export function useCloudSyncedState<T extends object>(
       } finally {
         inFlightRef.current = false;
         const nextPending = pendingPushRef.current;
-        if (nextPending && JSON.stringify(nextPending) !== lastSyncedRef.current) {
+        if (conflicted) {
+          syncErrorKeys.delete(syncKey);
+          await adoptRemote('conflict');
+          activeSyncingKeys.delete(syncKey);
+          notifyStatus();
+        } else if (nextPending && JSON.stringify(nextPending) !== lastSyncedRef.current) {
           pendingPushRef.current = null;
           void triggerPush(nextPending);
         } else {
@@ -213,8 +241,22 @@ export function useCloudSyncedState<T extends object>(
         }
       }
     },
-    [syncKey]
+    [syncKey, adoptRemote]
   );
+
+  // Re-sync when the tab/app returns to the foreground (stale devices must not push old data)
+  useEffect(() => {
+    if (!isHydrated) return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void adoptRemote('focus');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+  }, [isHydrated, adoptRemote]);
 
   // Persist to LocalStorage immediately, and Debounce Push to Cloud
   useEffect(() => {
