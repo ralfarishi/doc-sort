@@ -531,6 +531,15 @@ export function saveStored<T>(scope: SyncScope, state: T): void {
   }
 }
 
+/** Last server version seen per scope (optimistic lock token). Unknown until the first GET. */
+const serverVersions = new Map<SyncScope, number>();
+
+function rememberVersion(scope: SyncScope, res: Response): void {
+  const raw = res.headers.get('X-State-Version');
+  const v = raw === null ? NaN : Number(raw);
+  if (Number.isInteger(v) && v >= 0) serverVersions.set(scope, v);
+}
+
 /**
  * Returns the server snapshot, or `null` when the server is unreachable, unconfigured
  * or responds with a malformed payload. An empty `{}` means "reachable but empty".
@@ -540,19 +549,26 @@ export async function fetchServerSnapshot<T>(scope: SyncScope, guard: (v: unknow
     const res = await fetch(apiUrl(scope), { cache: 'no-store' });
     if (!res.ok) return null;
     const data: unknown = await res.json();
-    return guard(data) ? data : null;
+    if (!guard(data)) return null;
+    rememberVersion(scope, res);
+    return data;
   } catch {
     return null;
   }
 }
 
-export async function pushServerSnapshot<T>(scope: SyncScope, state: T): Promise<boolean> {
+/**
+ * Pushes a snapshot with the optimistic-lock version. Resolves `'conflict'` when another
+ * device wrote first (HTTP 409): the caller must refetch instead of overwriting.
+ */
+export async function pushServerSnapshot<T>(scope: SyncScope, state: T): Promise<boolean | 'conflict'> {
   try {
-    const res = await fetch(apiUrl(scope), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(state),
-    });
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const base = serverVersions.get(scope);
+    if (base !== undefined) headers['X-Base-Version'] = String(base);
+    const res = await fetch(apiUrl(scope), { method: 'POST', headers, body: JSON.stringify(state) });
+    if (res.status === 409) return 'conflict';
+    if (res.ok) rememberVersion(scope, res);
     return res.ok;
   } catch {
     return false;
@@ -1197,6 +1213,52 @@ function writePurgedHistory(items: HandoverHistoryItem[]): void {
     // Storage unavailable: nothing to recover from.
   }
 }
+/**
+ * True when a document (jenis_case#no) is already tracked anywhere: desk piles, handover
+ * queue or history. Used to block duplicate insertion.
+ */
+export function isDocumentTracked(
+  key: string,
+  master: MasterState,
+  handover: HandoverState,
+  history: HandoverHistoryState
+): boolean {
+  return collectHandledDebtorKeys(master, handover, history).has(key);
+}
+
+/**
+ * Invariant: a document lives in exactly ONE desk pile. If the same jenis_case#no appears in
+ * several piles (stale device push, double insertion), keep one copy: `prefer` surveyor first,
+ * then a real investigator, then the "BELUM DITUGASKAN" bucket. Returns the SAME reference when
+ * nothing changed so callers skip re-renders and redundant pushes.
+ */
+export function dedupeMaster(master: MasterState, prefer?: string): MasterState {
+  const rank = (s: string) => (s === prefer ? 0 : isKnownSurveyor(s) ? 1 : 2);
+  const owner = new Map<string, string>();
+  for (const [s, pile] of Object.entries(master)) {
+    for (const it of pile) {
+      const k = historyKey(it);
+      const cur = owner.get(k);
+      if (cur === undefined || rank(s) < rank(cur)) owner.set(k, s);
+    }
+  }
+
+  let changed = false;
+  const next: MasterState = {};
+  for (const [s, pile] of Object.entries(master)) {
+    const seen = new Set<string>();
+    const kept = pile.filter((it) => {
+      const k = historyKey(it);
+      if (owner.get(k) !== s || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+    if (kept.length !== pile.length) changed = true;
+    next[s] = kept.length === pile.length ? pile : kept;
+  }
+  return changed ? next : master;
+}
+
 /** Number of documents sitting in the "BELUM DITUGASKAN" bucket of the desk and the handover queue. */
 export function countUnassignedBucket(master: MasterState, handover: HandoverState): number {
   return (master[UNASSIGNED_BUCKET]?.length ?? 0) + (handover[UNASSIGNED_BUCKET]?.length ?? 0);

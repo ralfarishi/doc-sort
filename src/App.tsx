@@ -29,6 +29,9 @@ import {
   isKnownSurveyor,
   healHistory,
   reassignUnassignedBucket,
+  collectHandledDebtorKeys,
+  dedupeMaster,
+  isDocumentTracked,
   STORAGE_KEYS,
 } from './utils/logic';
 import { useCloudSyncedState } from './hooks/useCloudSyncedState';
@@ -44,6 +47,9 @@ const initialHistory = initialHistoryRaw as unknown as HandoverHistoryState;
 const excelRecords = (rawData as any).excel as ExcelRecord[];
 const folderRecords = (rawData as any).folders as FolderRecord[];
 
+const SYNC_CONFLICT_EVENT = 'organizer:sync-conflict';
+const notifyConflict = () => window.dispatchEvent(new Event(SYNC_CONFLICT_EVENT));
+
 export function App() {
   // Master Desk Piles (persisted locally & synced to Turso; automatically backfills missing photo info on load)
   const [masterState, setMasterState] = useCloudSyncedState<MasterState>({
@@ -52,8 +58,9 @@ export function App() {
     save: (state) => saveStored('master', state),
     fetchRemote: () => fetchServerSnapshot('master', isMasterState),
     pushRemote: (state) => pushServerSnapshot('master', state),
+    onConflict: notifyConflict,
     adoptEmptyRemote: false, // first-run seeds the cloud from initialTumpukan
-    normalize: (state) => backfillFolderInfo(state, folderRecords),
+    normalize: (state) => dedupeMaster(backfillFolderInfo(state, folderRecords)),
   });
 
   // Transit Trays per Surveyor (persisted locally & synced to Turso; empty remote is authoritative)
@@ -63,6 +70,7 @@ export function App() {
     save: (state) => saveStored('transit', state),
     fetchRemote: () => fetchServerSnapshot('transit', isTransitState),
     pushRemote: (state) => pushServerSnapshot('transit', state),
+    onConflict: notifyConflict,
     adoptEmptyRemote: true,
   });
 
@@ -73,6 +81,7 @@ export function App() {
     save: (state) => saveStored('handover', state),
     fetchRemote: () => fetchServerSnapshot('handover', isHandoverState),
     pushRemote: (state) => pushServerSnapshot('handover', state),
+    onConflict: notifyConflict,
     adoptEmptyRemote: true,
   });
 
@@ -83,6 +92,7 @@ export function App() {
     save: (state) => saveStored('history', state),
     fetchRemote: () => fetchServerSnapshot('history', isHandoverHistoryState),
     pushRemote: (state) => pushServerSnapshot('history', state),
+    onConflict: notifyConflict,
     adoptEmptyRemote: false, // first-run seeds the cloud from initialHistory
     // Recover entries an older version wrongly purged; history is never pruned against folders/PDFs.
     normalize: healHistory,
@@ -128,6 +138,14 @@ export function App() {
   const dismissToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  // Another device wrote first: its data was adopted and our unsynced edit was dropped
+  useEffect(() => {
+    const onConflict = () =>
+      showToast('warning', 'Data Diperbarui dari Perangkat Lain', 'Perubahan terakhir tidak disimpan. Silakan ulangi aksi tersebut.');
+    window.addEventListener(SYNC_CONFLICT_EVENT, onConflict);
+    return () => window.removeEventListener(SYNC_CONFLICT_EVENT, onConflict);
+  }, [showToast]);
 
   // List of surveyors known across master state & excel
   const surveyorsList = useMemo(() => {
@@ -180,6 +198,11 @@ export function App() {
       showToast('error', 'Investigator Belum Dipilih', `${excelItem.debitur} belum bisa disisipkan tanpa investigator.`);
       return;
     }
+    const docKey = `${excelItem.jenis_case}#${excelItem.no}`;
+    if (isDocumentTracked(docKey, masterState, handoverState, historyState)) {
+      showToast('warning', 'Sudah Tercatat', `${excelItem.debitur} (${docKey}) sudah ada di meja, antrean, atau riwayat.`);
+      return;
+    }
     const currentPile = masterState[cleanSurv] || [];
 
     const pseudoResult: MatchResult = {
@@ -219,10 +242,17 @@ export function App() {
 
   // Save new master state from Wizard (also automatically removes any filed items from Transit Tray)
   const handleSaveNewMaster = (surveyor: string, newPile: MasterItem[]) => {
-    setMasterState((prev) => ({
-      ...prev,
-      [surveyor]: newPile,
-    }));
+    // Block documents already in the handover queue / history; dedupe the rest across piles.
+    const blocked = collectHandledDebtorKeys(handoverState, historyState);
+    const safePile = newPile.filter((it) => !blocked.has(`${it.jenis_case}#${it.no}`));
+    if (safePile.length !== newPile.length) {
+      showToast(
+        'warning',
+        'Sebagian Berkas Dilewati',
+        `${newPile.length - safePile.length} berkas sudah ada di antrean ambil atau riwayat dan tidak disisipkan.`
+      );
+    }
+    setMasterState((prev) => dedupeMaster({ ...prev, [surveyor]: safePile }, surveyor));
     setTransitState((prev) => removeFiledFromTransit(prev, surveyor, newPile));
   };
 

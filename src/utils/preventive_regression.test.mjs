@@ -230,3 +230,14 @@ test('PREVENTIF 5: Sequential Item Return - Mengembalikan 1 per 1 tetap memperta
   // Posisi DANI harus berada di antara AHMAD dan FARHAN (A-Z)
   assert.deepStrictEqual(nextMaster[surveyor].map((it) => it.debitur), ['AHMAD', 'DANI', 'FARHAN']);
 });
+
+test('PREVENTIF 6: Dedup - dokumen yang sama di 2 pile hanya disisakan satu (prefer investigator asli)', async () => {
+  const { dedupeMaster, isDocumentTracked } = await import('./logic.ts');
+  const mk = (s) => ({ debitur: 'NURSIDAH', no: 588, id_klaim: '', kota: 'X', wilayah: 'X', jenis_case: 'Reguler 2', surveyor: s, visit: '', status_laporan: '', hasil_visit: '', files_count: 0, folder_path: '' });
+  const master = { 'BELUM DITUGASKAN': [mk('BELUM DITUGASKAN')], 'KIKI SUMARNA': [mk('KIKI SUMARNA')] };
+  const out = dedupeMaster(master);
+  assert.strictEqual(out['BELUM DITUGASKAN'].length, 0);
+  assert.strictEqual(out['KIKI SUMARNA'].length, 1);
+  assert.strictEqual(dedupeMaster(out), out);
+  assert.strictEqual(isDocumentTracked('Reguler 2#588', out, {}, {}), true);
+});
